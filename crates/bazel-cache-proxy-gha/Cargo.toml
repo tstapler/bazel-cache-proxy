@@ -1,0 +1,29 @@
+[package]
+name = "bazel-cache-proxy-gha"
+version = "0.1.0"
+edition = "2021"
+license = "MIT OR Apache-2.0"
+description = "GitHub Actions Cache backend for bazel-cache-proxy"
+repository = "https://github.com/tstapler/bazel-cache-proxy"
+
+[dependencies]
+bazel-cache-proxy-core = { path = "../bazel-cache-proxy-core" }
+tokio = { workspace = true }
+async-trait = { workspace = true }
+reqwest = { workspace = true }
+async-compression = { workspace = true }
+prost = { workspace = true }
+thiserror = { workspace = true }
+tracing = { workspace = true }
+bytes = { workspace = true }
+futures = { workspace = true }
+uuid = { workspace = true }
+serde = { workspace = true }
+tokio-util = { workspace = true }
+
+[dev-dependencies]
+tokio-test = { workspace = true }
+wiremock = { workspace = true }
+
+[build-dependencies]
+prost-build = { workspace = true }

@@ -1,0 +1,8 @@
+# Standalone disk cache — suitable for local development
+http_addr = "0.0.0.0:9090"
+grpc_addr = "0.0.0.0:9091"
+
+[backend]
+type = "disk"
+root = "/var/cache/bazel"
+max_size_bytes = 10737418240  # 10 GiB

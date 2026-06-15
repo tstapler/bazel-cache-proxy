@@ -1,0 +1,23 @@
+[package]
+name = "bazel-cache-proxy-gcs"
+version = "0.1.0"
+edition = "2021"
+license = "MIT OR Apache-2.0"
+description = "GCS backend for bazel-cache-proxy"
+repository = "https://github.com/tstapler/bazel-cache-proxy"
+
+[dependencies]
+bazel-cache-proxy-core = { path = "../bazel-cache-proxy-core" }
+serde = { workspace = true }
+tokio = { workspace = true }
+tokio-util = { workspace = true }
+async-trait = { workspace = true }
+object_store = { workspace = true }
+thiserror = { workspace = true }
+tracing = { workspace = true }
+bytes = { workspace = true }
+futures = { workspace = true }
+
+[dev-dependencies]
+tokio-test = { workspace = true }
+wiremock = { workspace = true }

@@ -1,0 +1,51 @@
+[workspace]
+members = [
+    "crates/bazel-cache-proxy-core",
+    "crates/bazel-cache-proxy-disk",
+    "crates/bazel-cache-proxy-s3",
+    "crates/bazel-cache-proxy-gcs",
+    "crates/bazel-cache-proxy-gha",
+    "crates/bazel-cache-proxy",
+]
+resolver = "2"
+
+[workspace.dependencies]
+axum = { version = "0.8", features = ["macros"] }
+tonic = { version = "0.12", features = ["transport"] }
+prost = "0.13"
+tonic-build = "0.12"
+prost-build = "0.13"
+object_store = { version = "0.11", features = ["aws", "gcp"] }
+reqwest = { version = "0.12", features = ["json", "stream"] }
+async-compression = { version = "0.4", features = ["tokio", "zstd"] }
+tokio = { version = "1", features = ["full"] }
+tokio-util = { version = "0.7", features = ["io"] }
+tokio-stream = { version = "0.1", features = ["net"] }
+async-trait = "0.1"
+sha2 = "0.10"
+bytes = "1"
+thiserror = "2"
+serde = { version = "1", features = ["derive"] }
+toml = "0.8"
+figment = { version = "0.10", features = ["toml", "env"] }
+clap = { version = "4", features = ["derive"] }
+metrics = "0.24"
+metrics-exporter-prometheus = "0.16"
+futures = "0.3"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+uuid = { version = "1", features = ["v4"] }
+lru = "0.12"
+dashmap = "6"
+tower = "0.5"
+tower-http = { version = "0.6", features = ["trace"] }
+http = "1"
+http-body-util = "0.1"
+hyper = { version = "1", features = ["full"] }
+pin-project-lite = "0.2"
+tempfile = "3"
+
+mockall = "0.13"
+wiremock = "0.6"
+proptest = "1"
+tokio-test = "0.4"

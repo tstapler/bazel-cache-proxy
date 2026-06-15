@@ -1,0 +1,35 @@
+[package]
+name = "bazel-cache-proxy"
+version = "0.1.0"
+edition = "2021"
+license = "MIT OR Apache-2.0"
+description = "Bazel remote cache proxy with pluggable storage backends"
+repository = "https://github.com/tstapler/bazel-cache-proxy"
+
+[[bin]]
+name = "bazel-cache-proxy"
+path = "src/main.rs"
+
+[dependencies]
+bazel-cache-proxy-core = { path = "../bazel-cache-proxy-core" }
+bazel-cache-proxy-disk = { path = "../bazel-cache-proxy-disk" }
+bazel-cache-proxy-s3 = { path = "../bazel-cache-proxy-s3" }
+bazel-cache-proxy-gcs = { path = "../bazel-cache-proxy-gcs" }
+bazel-cache-proxy-gha = { path = "../bazel-cache-proxy-gha" }
+tokio = { workspace = true }
+axum = { workspace = true }
+tonic = { workspace = true }
+serde = { workspace = true }
+toml = { workspace = true }
+figment = { workspace = true }
+clap = { workspace = true }
+metrics = { workspace = true }
+metrics-exporter-prometheus = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+async-trait = { workspace = true }
+futures = { workspace = true }
+
+[dev-dependencies]
+tokio-test = { workspace = true }
+tempfile = { workspace = true }

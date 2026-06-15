@@ -1,0 +1,14 @@
+# Layered: local disk L1 (fast) + GitHub Actions Cache L2 (persistent)
+http_addr = "0.0.0.0:9090"
+grpc_addr = "0.0.0.0:9091"
+
+[backend]
+type = "layered"
+
+[backend.primary]
+type = "disk"
+root = "/tmp/bazel-cache-l1"
+max_size_bytes = 5368709120  # 5 GiB
+
+[backend.fallback]
+type = "gha"

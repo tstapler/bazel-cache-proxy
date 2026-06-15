@@ -1,0 +1,12 @@
+# AWS S3 backend
+http_addr = "0.0.0.0:9090"
+grpc_addr = "0.0.0.0:9091"
+
+[backend]
+type = "s3"
+bucket = "my-bazel-cache"
+region = "us-east-1"
+# prefix = "bazel/"            # optional
+# endpoint = "http://minio:9000"  # for MinIO/self-hosted S3
+# access_key_id = "..."        # or use IAM role
+# secret_access_key = "..."
