@@ -398,6 +398,7 @@ version = "0.1.0"
 dependencies = [
  "async-compression",
  "async-trait",
+ "base64",
  "bazel-cache-proxy-core",
  "bytes",
  "futures",
@@ -405,6 +406,7 @@ dependencies = [
  "prost-build",
  "reqwest",
  "serde",
+ "serde_json",
  "thiserror 2.0.18",
  "tokio",
  "tokio-test",

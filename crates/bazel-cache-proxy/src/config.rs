@@ -13,7 +13,6 @@ pub struct Config {
 
     /// Prometheus metrics path (default: "/metrics")
     #[serde(default = "default_metrics_path")]
-    #[allow(dead_code)]
     pub metrics_path: String,
 
     pub backend: BackendConfig,

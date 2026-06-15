@@ -15,7 +15,19 @@ pub async fn serve(
     addr: SocketAddr,
     ready_flag: Option<Arc<std::sync::atomic::AtomicBool>>,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-    let app = build_router(backend, ready_flag);
+    serve_with_metrics(backend, addr, ready_flag, None).await
+}
+
+/// A metrics renderer: a path and a function that returns the Prometheus scrape output.
+pub type MetricsRenderer = (String, Arc<dyn Fn() -> String + Send + Sync + 'static>);
+
+pub async fn serve_with_metrics(
+    backend: Arc<dyn StorageBackend>,
+    addr: SocketAddr,
+    ready_flag: Option<Arc<std::sync::atomic::AtomicBool>>,
+    metrics: Option<MetricsRenderer>,
+) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    let app = build_router_with_metrics(backend, ready_flag, metrics);
     let listener = TcpListener::bind(addr).await?;
     axum::serve(listener, app)
         .with_graceful_shutdown(shutdown_signal())
@@ -27,12 +39,20 @@ pub fn build_router(
     backend: Arc<dyn StorageBackend>,
     ready_flag: Option<Arc<std::sync::atomic::AtomicBool>>,
 ) -> Router {
+    build_router_with_metrics(backend, ready_flag, None)
+}
+
+pub fn build_router_with_metrics(
+    backend: Arc<dyn StorageBackend>,
+    ready_flag: Option<Arc<std::sync::atomic::AtomicBool>>,
+    metrics: Option<MetricsRenderer>,
+) -> Router {
     let put_routes = Router::new()
         .route("/cache/cas/{hash}", put(handlers::put_cache))
         .route("/cache/ac/{hash}", put(handlers::put_cache))
         .layer(DefaultBodyLimit::disable());
 
-    Router::new()
+    let mut router = Router::new()
         .route("/cache/cas/{hash}", head(handlers::head_cache))
         .route("/cache/cas/{hash}", get(handlers::get_cache))
         .route("/cache/ac/{hash}", head(handlers::head_cache))
@@ -43,7 +63,19 @@ pub fn build_router(
         .with_state(AppState {
             backend,
             ready: ready_flag.unwrap_or_else(|| Arc::new(std::sync::atomic::AtomicBool::new(true))),
-        })
+        });
+
+    if let Some((path, renderer)) = metrics {
+        router = router.route(
+            &path,
+            get(move || {
+                let r = renderer.clone();
+                async move { r() }
+            }),
+        );
+    }
+
+    router
 }
 
 #[derive(Clone)]

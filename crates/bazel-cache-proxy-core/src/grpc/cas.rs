@@ -199,7 +199,7 @@ mod tests {
         digest::EMPTY_SHA256,
         proto::reapi::{
             batch_update_blobs_request, Digest, FindMissingBlobsRequest,
-            BatchUpdateBlobsRequest, FindMissingBlobsResponse,
+            BatchUpdateBlobsRequest,
         },
         testing::InMemoryBackend,
     };

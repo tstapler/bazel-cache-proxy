@@ -1,10 +1,16 @@
 use std::sync::Arc;
+use std::sync::atomic::{AtomicI64, Ordering};
+use std::sync::Mutex;
+
 use dashmap::DashMap;
 use futures::StreamExt;
 use sha2::{Digest as Sha2Digest, Sha256};
 use tokio::io::AsyncReadExt;
 use tokio::sync::mpsc;
+use tokio_stream::wrappers::ReceiverStream;
+use tokio_util::io::StreamReader;
 use tonic::{Request, Response, Status, Streaming};
+
 use crate::{
     backend::StorageBackend,
     digest::EMPTY_SHA256,
@@ -34,7 +40,7 @@ impl ByteStreamService {
 
 #[tonic::async_trait]
 impl ByteStream for ByteStreamService {
-    type ReadStream = tokio_stream::wrappers::ReceiverStream<Result<ReadResponse, Status>>;
+    type ReadStream = ReceiverStream<Result<ReadResponse, Status>>;
 
     async fn read(
         &self,
@@ -48,7 +54,7 @@ impl ByteStream for ByteStreamService {
         if parsed.hash == EMPTY_SHA256 && parsed.size == 0 {
             let (tx, rx) = mpsc::channel(1);
             drop(tx);
-            return Ok(Response::new(tokio_stream::wrappers::ReceiverStream::new(rx)));
+            return Ok(Response::new(ReceiverStream::new(rx)));
         }
 
         let mut reader = self
@@ -94,7 +100,7 @@ impl ByteStream for ByteStreamService {
             }
         });
 
-        Ok(Response::new(tokio_stream::wrappers::ReceiverStream::new(rx)))
+        Ok(Response::new(ReceiverStream::new(rx)))
     }
 
     async fn write(
@@ -102,44 +108,82 @@ impl ByteStream for ByteStreamService {
         request: Request<Streaming<WriteRequest>>,
     ) -> Result<Response<WriteResponse>, Status> {
         let mut stream = request.into_inner();
-        let mut resource_name = String::new();
-        let mut all_data: Vec<u8> = Vec::new();
 
-        while let Some(chunk) = stream.next().await {
-            let chunk = chunk.map_err(|e| Status::internal(e.to_string()))?;
-            if resource_name.is_empty() && !chunk.resource_name.is_empty() {
-                resource_name = chunk.resource_name.clone();
-            }
-            if !chunk.data.is_empty() {
-                all_data.extend_from_slice(&chunk.data);
-            }
+        // Peek first message to get resource_name
+        let first = stream
+            .next()
+            .await
+            .ok_or_else(|| Status::invalid_argument("empty write stream"))??;
+        if first.resource_name.is_empty() {
+            return Err(Status::invalid_argument("resource_name missing in first message"));
         }
-
-        if resource_name.is_empty() {
-            return Err(Status::invalid_argument("empty resource_name"));
-        }
-
-        let parsed = WriteResourceName::parse(&resource_name)
+        let parsed = WriteResourceName::parse(&first.resource_name)
             .map_err(|e| Status::invalid_argument(e.to_string()))?;
 
-        let actual_hash = format!("{:x}", Sha256::digest(&all_data));
+        // Channel pipe: feeder task writes chunks; backend reads from StreamReader
+        let (tx, rx) = mpsc::channel::<Result<bytes::Bytes, std::io::Error>>(32);
+
+        // Shared state for hash verification after put() completes
+        let hasher = Arc::new(Mutex::new(Sha256::new()));
+        let total_bytes = Arc::new(AtomicI64::new(0));
+        let hasher_clone = hasher.clone();
+        let total_clone = total_bytes.clone();
+        let first_data = first.data.clone();
+        let resource_name_for_query = first.resource_name.clone();
+
+        // Spawn feeder: reads gRPC stream, computes SHA-256, sends bytes to channel
+        let feed_handle = tokio::spawn(async move {
+            // Send first chunk's data
+            if !first_data.is_empty() {
+                hasher_clone.lock().unwrap().update(&first_data);
+                total_clone.fetch_add(first_data.len() as i64, Ordering::Relaxed);
+                if tx.send(Ok(bytes::Bytes::from(first_data))).await.is_err() {
+                    return;
+                }
+            }
+            while let Some(msg) = stream.next().await {
+                match msg {
+                    Ok(chunk) if !chunk.data.is_empty() => {
+                        hasher_clone.lock().unwrap().update(&chunk.data);
+                        total_clone.fetch_add(chunk.data.len() as i64, Ordering::Relaxed);
+                        if tx.send(Ok(bytes::Bytes::from(chunk.data))).await.is_err() {
+                            break;
+                        }
+                    }
+                    Ok(_) => {} // empty data frame, skip
+                    Err(e) => {
+                        let _ = tx.send(Err(std::io::Error::other(e.to_string()))).await;
+                        break;
+                    }
+                }
+            }
+            // dropping tx closes the channel → StreamReader sees EOF
+        });
+
+        // Backend reads from the channel (streaming, no full-body buffer)
+        let reader = StreamReader::new(ReceiverStream::new(rx));
+
+        self.backend
+            .put(EntryKind::CAS, &parsed.hash, parsed.size, Box::new(reader))
+            .await
+            .map_err(|e| Status::internal(e.to_string()))?;
+
+        // Wait for feeder to complete (it may still be running if backend consumed faster)
+        let _ = feed_handle.await;
+
+        // Verify hash after put() completes
+        let committed_size = total_bytes.load(Ordering::Relaxed);
+        let actual_hash = format!("{:x}", hasher.lock().unwrap().clone().finalize());
         if actual_hash != parsed.hash {
+            // Delete the corrupted entry
+            let _ = self.backend.delete(EntryKind::CAS, &parsed.hash).await;
             return Err(Status::invalid_argument(format!(
                 "hash mismatch: expected {}, got {actual_hash}",
                 parsed.hash
             )));
         }
 
-        let committed_size = all_data.len() as i64;
-        let reader = std::io::Cursor::new(all_data);
-
-        self.backend
-            .put(EntryKind::CAS, &parsed.hash, committed_size, Box::new(reader))
-            .await
-            .map_err(|e| Status::internal(e.to_string()))?;
-
-        self.completed_writes.insert(resource_name, committed_size);
-
+        self.completed_writes.insert(resource_name_for_query, committed_size);
         Ok(Response::new(WriteResponse { committed_size }))
     }
 

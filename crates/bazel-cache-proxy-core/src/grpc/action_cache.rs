@@ -105,7 +105,6 @@ mod tests {
     use std::sync::Arc;
     use tonic::Code;
     use crate::{
-        digest::EMPTY_SHA256,
         proto::reapi::{ActionResult, Digest},
         testing::InMemoryBackend,
     };
