@@ -5,6 +5,7 @@ members = [
     "crates/bazel-cache-proxy-s3",
     "crates/bazel-cache-proxy-gcs",
     "crates/bazel-cache-proxy-gha",
+    "crates/bazel-cache-proxy-sqlite",
     "crates/bazel-cache-proxy",
 ]
 resolver = "2"
@@ -46,6 +47,7 @@ pin-project-lite = "0.2"
 tempfile = "3"
 base64 = "0.22"
 serde_json = "1"
+zstd = "0.13"
 
 mockall = "0.13"
 wiremock = "0.6"

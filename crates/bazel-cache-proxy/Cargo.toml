@@ -16,6 +16,7 @@ bazel-cache-proxy-disk = { path = "../bazel-cache-proxy-disk" }
 bazel-cache-proxy-s3 = { path = "../bazel-cache-proxy-s3" }
 bazel-cache-proxy-gcs = { path = "../bazel-cache-proxy-gcs" }
 bazel-cache-proxy-gha = { path = "../bazel-cache-proxy-gha" }
+bazel-cache-proxy-sqlite = { path = "../bazel-cache-proxy-sqlite" }
 tokio = { workspace = true }
 axum = { workspace = true }
 tonic = { workspace = true }

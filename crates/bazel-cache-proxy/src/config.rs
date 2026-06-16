@@ -29,6 +29,7 @@ pub enum BackendConfig {
     S3(S3Config),
     Gcs(GcsConfig),
     Gha(GhaConfig),
+    Sqlite(SqliteConfig),
     Layered(LayeredConfig),
 }
 
@@ -61,6 +62,14 @@ pub struct GcsConfig {
 #[derive(Debug, Deserialize)]
 pub struct GhaConfig {
     // GHA backend reads all config from env vars
+}
+
+#[derive(Debug, Deserialize)]
+pub struct SqliteConfig {
+    /// Path to the SQLite database file (created if it doesn't exist).
+    pub path: PathBuf,
+    /// Optional cap on total compressed bytes stored; LRU eviction removes oldest entries.
+    pub max_size_bytes: Option<u64>,
 }
 
 #[derive(Debug, Deserialize)]

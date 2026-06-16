@@ -49,6 +49,13 @@ pub fn build_backend(cfg: &BackendConfig) -> std::pin::Pin<Box<dyn std::future::
                     }
                 }
             }
+            BackendConfig::Sqlite(c) => {
+                use bazel_cache_proxy_sqlite::SqliteBackend;
+                let backend = SqliteBackend::new(c.path.clone(), c.max_size_bytes)
+                    .await
+                    .expect("failed to create SQLite backend");
+                Arc::new(backend) as Arc<dyn StorageBackend>
+            }
             BackendConfig::Layered(c) => {
                 let l1 = build_backend(&c.primary).await;
                 let l2 = build_backend(&c.fallback).await;

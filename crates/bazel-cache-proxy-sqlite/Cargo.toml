@@ -1,0 +1,20 @@
+[package]
+name = "bazel-cache-proxy-sqlite"
+version = "0.1.0"
+edition = "2021"
+license = "MIT OR Apache-2.0"
+description = "SQLite storage backend with per-blob zstd compression for bazel-cache-proxy"
+repository = "https://github.com/tstapler/bazel-cache-proxy"
+
+[dependencies]
+bazel-cache-proxy-core = { path = "../bazel-cache-proxy-core" }
+async-trait = { workspace = true }
+tokio = { workspace = true }
+rusqlite = { version = "0.32", features = ["bundled"] }
+zstd = { workspace = true }
+thiserror = { workspace = true }
+tracing = { workspace = true }
+bytes = { workspace = true }
+
+[dev-dependencies]
+tempfile = { workspace = true }
