@@ -1,5 +1,5 @@
 use std::sync::Arc;
-use bazel_cache_proxy_core::{backend::StorageBackend, LayeredBackend};
+use bazel_cache_proxy_core::{backend::StorageBackend, LayeredBackend, NoopBackend};
 use crate::config::BackendConfig;
 
 pub fn build_backend(cfg: &BackendConfig) -> std::pin::Pin<Box<dyn std::future::Future<Output = Arc<dyn StorageBackend>> + Send + '_>> {
@@ -40,8 +40,12 @@ pub fn build_backend(cfg: &BackendConfig) -> std::pin::Pin<Box<dyn std::future::
                 match GhaBackend::from_env() {
                     Ok(backend) => Arc::new(backend) as Arc<dyn StorageBackend>,
                     Err(e) => {
-                        tracing::warn!("GHA backend unavailable: {e}; check that ACTIONS_CACHE_URL and ACTIONS_RUNTIME_TOKEN env vars are set");
-                        panic!("GHA backend init failed: {e}");
+                        tracing::warn!(
+                            "GHA backend unavailable: {e}; check that ACTIONS_CACHE_URL and \
+                             ACTIONS_RUNTIME_TOKEN env vars are set. Running in no-op mode \
+                             (cache misses only — builds will not be accelerated)."
+                        );
+                        Arc::new(NoopBackend) as Arc<dyn StorageBackend>
                     }
                 }
             }

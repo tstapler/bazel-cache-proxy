@@ -6,6 +6,7 @@ pub mod grpc;
 pub mod hashing_writer;
 pub mod http;
 pub mod layered;
+pub mod noop;
 pub mod proto;
 pub mod testing;
 
@@ -20,3 +21,4 @@ pub use entry_kind::EntryKind;
 pub use error::CacheError;
 pub use hashing_writer::HashingWriter;
 pub use layered::LayeredBackend;
+pub use noop::NoopBackend;
