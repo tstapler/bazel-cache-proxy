@@ -1,76 +1,6 @@
 use std::path::PathBuf;
+use bytesize::ByteSize;
 use serde::Deserialize;
-
-// ── Human-readable byte size deserializer ─────────────────────────────────────
-// Accepts plain integers (1073741824) or strings with SI/IEC suffixes:
-//   "10 GB", "500MB", "1.5 TiB", "256 KiB"
-// Decimal SI: KB/MB/GB/TB = powers of 1000
-// Binary IEC: KiB/MiB/GiB/TiB = powers of 1024
-
-fn parse_byte_size(s: &str) -> Result<u64, String> {
-    let s = s.trim();
-    if let Ok(n) = s.parse::<u64>() {
-        return Ok(n);
-    }
-    let split = s.find(|c: char| c.is_alphabetic())
-        .ok_or_else(|| format!("invalid byte size: '{s}'"))?;
-    let num: f64 = s[..split].trim().parse()
-        .map_err(|_| format!("invalid number in byte size: '{}'", &s[..split]))?;
-    let multiplier: u64 = match s[split..].trim().to_uppercase().as_str() {
-        "B"   => 1,
-        "KB"  => 1_000,
-        "KIB" => 1_024,
-        "MB"  => 1_000_000,
-        "MIB" => 1_048_576,
-        "GB"  => 1_000_000_000,
-        "GIB" => 1_073_741_824,
-        "TB"  => 1_000_000_000_000,
-        "TIB" => 1_099_511_627_776,
-        other => return Err(format!("unknown byte size unit: '{other}'")),
-    };
-    Ok((num * multiplier as f64) as u64)
-}
-
-fn deserialize_byte_size<'de, D: serde::Deserializer<'de>>(d: D) -> Result<u64, D::Error> {
-    struct V;
-    impl<'de> serde::de::Visitor<'de> for V {
-        type Value = u64;
-        fn expecting(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
-            f.write_str("an integer or a string like \"10 GB\", \"500 MiB\"")
-        }
-        fn visit_u64<E: serde::de::Error>(self, v: u64) -> Result<u64, E> { Ok(v) }
-        fn visit_i64<E: serde::de::Error>(self, v: i64) -> Result<u64, E> {
-            u64::try_from(v).map_err(E::custom)
-        }
-        fn visit_str<E: serde::de::Error>(self, s: &str) -> Result<u64, E> {
-            parse_byte_size(s).map_err(E::custom)
-        }
-    }
-    d.deserialize_any(V)
-}
-
-fn deserialize_opt_byte_size<'de, D: serde::Deserializer<'de>>(d: D) -> Result<Option<u64>, D::Error> {
-    struct V;
-    impl<'de> serde::de::Visitor<'de> for V {
-        type Value = Option<u64>;
-        fn expecting(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
-            f.write_str("null, an integer, or a string like \"10 GB\", \"500 MiB\"")
-        }
-        fn visit_none<E: serde::de::Error>(self) -> Result<Option<u64>, E> { Ok(None) }
-        fn visit_unit<E: serde::de::Error>(self) -> Result<Option<u64>, E> { Ok(None) }
-        fn visit_some<D2: serde::Deserializer<'de>>(self, d: D2) -> Result<Option<u64>, D2::Error> {
-            deserialize_byte_size(d).map(Some)
-        }
-        fn visit_u64<E: serde::de::Error>(self, v: u64) -> Result<Option<u64>, E> { Ok(Some(v)) }
-        fn visit_i64<E: serde::de::Error>(self, v: i64) -> Result<Option<u64>, E> {
-            u64::try_from(v).map(Some).map_err(E::custom)
-        }
-        fn visit_str<E: serde::de::Error>(self, s: &str) -> Result<Option<u64>, E> {
-            parse_byte_size(s).map(Some).map_err(E::custom)
-        }
-    }
-    d.deserialize_any(V)
-}
 
 #[derive(Debug, Deserialize)]
 pub struct Config {
@@ -107,11 +37,11 @@ pub enum BackendConfig {
 #[derive(Debug, Deserialize)]
 pub struct DiskConfig {
     pub root: PathBuf,
-    #[serde(default = "default_max_size", deserialize_with = "deserialize_byte_size")]
-    pub max_size_bytes: u64,
+    #[serde(default = "default_max_size")]
+    pub max_size_bytes: ByteSize,
 }
 
-fn default_max_size() -> u64 { 10 * 1024 * 1024 * 1024 } // 10 GiB
+fn default_max_size() -> ByteSize { ByteSize::gib(10) }
 
 #[derive(Debug, Deserialize, Clone)]
 pub struct S3Config {
@@ -141,8 +71,8 @@ pub struct SqliteConfig {
     pub path: PathBuf,
     /// Optional cap on total compressed bytes stored; LRU eviction removes oldest entries.
     /// Accepts integers or human-readable strings: "10 GB", "500 MiB".
-    #[serde(default, deserialize_with = "deserialize_opt_byte_size")]
-    pub max_size_bytes: Option<u64>,
+    #[serde(default)]
+    pub max_size_bytes: Option<ByteSize>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -178,18 +108,8 @@ max_size_bytes = 1073741824
         assert!(matches!(config.backend, BackendConfig::Disk(_)));
         if let BackendConfig::Disk(d) = &config.backend {
             assert_eq!(d.root, std::path::Path::new("/tmp/cache"));
-            assert_eq!(d.max_size_bytes, 1073741824);
+            assert_eq!(d.max_size_bytes.as_u64(), 1_073_741_824);
         }
-    }
-
-    #[test]
-    fn byte_size_parses_human_readable_strings() {
-        assert_eq!(parse_byte_size("500 MB").unwrap(), 500_000_000);
-        assert_eq!(parse_byte_size("1 GiB").unwrap(), 1_073_741_824);
-        assert_eq!(parse_byte_size("10GB").unwrap(), 10_000_000_000);
-        assert_eq!(parse_byte_size("1.5 TB").unwrap(), 1_500_000_000_000);
-        assert_eq!(parse_byte_size("256KiB").unwrap(), 262_144);
-        assert_eq!(parse_byte_size("1073741824").unwrap(), 1_073_741_824);
     }
 
     #[test]
@@ -202,7 +122,7 @@ max_size_bytes = "20 GiB"
 "#;
         let config: Config = toml::from_str(toml).unwrap();
         if let BackendConfig::Disk(d) = &config.backend {
-            assert_eq!(d.max_size_bytes, 20 * 1_073_741_824);
+            assert_eq!(d.max_size_bytes, ByteSize::gib(20));
         }
     }
 
@@ -216,7 +136,7 @@ max_size_bytes = "50 GB"
 "#;
         let config: Config = toml::from_str(toml).unwrap();
         if let BackendConfig::Sqlite(s) = &config.backend {
-            assert_eq!(s.max_size_bytes, Some(50_000_000_000));
+            assert_eq!(s.max_size_bytes, Some(ByteSize::gb(50)));
         }
     }
 

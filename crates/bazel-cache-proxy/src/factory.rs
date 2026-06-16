@@ -7,7 +7,7 @@ pub fn build_backend(cfg: &BackendConfig) -> std::pin::Pin<Box<dyn std::future::
         match cfg {
             BackendConfig::Disk(c) => {
                 use bazel_cache_proxy_disk::DiskBackend;
-                let backend = DiskBackend::new(c.root.clone(), c.max_size_bytes)
+                let backend = DiskBackend::new(c.root.clone(), c.max_size_bytes.as_u64())
                     .await
                     .expect("failed to create disk backend");
                 Arc::new(backend) as Arc<dyn StorageBackend>
@@ -51,7 +51,7 @@ pub fn build_backend(cfg: &BackendConfig) -> std::pin::Pin<Box<dyn std::future::
             }
             BackendConfig::Sqlite(c) => {
                 use bazel_cache_proxy_sqlite::SqliteBackend;
-                let backend = SqliteBackend::new(c.path.clone(), c.max_size_bytes)
+                let backend = SqliteBackend::new(c.path.clone(), c.max_size_bytes.map(|b| b.as_u64()))
                     .await
                     .expect("failed to create SQLite backend");
                 Arc::new(backend) as Arc<dyn StorageBackend>

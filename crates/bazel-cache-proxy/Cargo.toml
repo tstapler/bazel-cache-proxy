@@ -29,6 +29,7 @@ metrics-exporter-prometheus = { workspace = true }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
 async-trait = { workspace = true }
+bytesize = { workspace = true }
 futures = { workspace = true }
 
 [dev-dependencies]
