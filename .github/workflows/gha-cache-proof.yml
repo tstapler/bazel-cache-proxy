@@ -15,9 +15,16 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: gha-cache-proof-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   build:
+    # Fork PRs get a read-only cache token, so the proof cannot publish; skip them.
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
         with: { persist-credentials: false }
@@ -33,6 +40,7 @@ jobs:
   proof:
     needs: build
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     strategy:
       max-parallel: 1 # cold must finish before warm starts
       matrix:

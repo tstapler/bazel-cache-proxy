@@ -50,6 +50,28 @@ pub struct PackConfig {
 }
 
 impl PackConfig {
+    fn validate(&self) -> Result<(), CacheError> {
+        let bad_prefix = self.prefix.is_empty()
+            || self.prefix.len() > 128
+            || !self
+                .prefix
+                .bytes()
+                .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'.' | b'_' | b'-'));
+        if bad_prefix {
+            return Err(CacheError::Configuration(
+                "prefix must be 1-128 characters of [A-Za-z0-9._-]".into(),
+            ));
+        }
+        if self.max_packs == 0 || self.max_pack_bytes < (1 << 20) {
+            return Err(CacheError::Configuration(
+                "max_packs must be >= 1 and max_pack_bytes >= 1 MiB (packs are the unit of the \
+                 200 uploads/minute budget)"
+                    .into(),
+            ));
+        }
+        Ok(())
+    }
+
     pub fn default_run_id() -> String {
         match (
             std::env::var("GITHUB_RUN_ID"),
@@ -117,6 +139,7 @@ impl PackBackend {
         cfg: PackConfig,
         transport: Arc<dyn CacheTransport>,
     ) -> Result<Self, CacheError> {
+        cfg.validate()?;
         tokio::fs::create_dir_all(&cfg.root)
             .await
             .map_err(|e| CacheError::Io(e.to_string()))?;
@@ -331,6 +354,11 @@ fn chunk_by_size(
         let size = std::fs::metadata(root.join(b.0.path_segment()).join(&b.1))
             .map(|m| m.len())
             .unwrap_or(0);
+        if size > max {
+            // One unbounded pack that fails to upload would block every later flush.
+            warn!(blob = %b.1, size, max, "blob exceeds max_pack_bytes; it will not be persisted");
+            continue;
+        }
         if !cur.is_empty() && cur_bytes + size > max {
             chunks.push(std::mem::take(&mut cur));
             cur_bytes = 0;
@@ -405,6 +433,7 @@ impl StorageBackend for PackBackend {
         let (taken, packs, degraded, seq) = {
             let mut st = self.state.lock().await;
             if st.restore_unsafe {
+                warn!("not publishing: an earlier restore error means a new manifest could hide existing packs");
                 return skipped("restore failed earlier; publishing would hide existing packs");
             }
             if st.new_blobs.is_empty() && !st.degraded {
@@ -523,6 +552,10 @@ mod tests {
     struct FakeTransport {
         entries: StdMutex<Vec<(String, Vec<u8>)>>,
         fail_restore: bool,
+        /// Fail restores of pack entries only (the manifest lookup succeeds).
+        fail_pack_restore: bool,
+        /// Delay restores of keys containing this text, to force out-of-order completion.
+        slow_key: Option<&'static str>,
     }
 
     impl FakeTransport {
@@ -538,8 +571,11 @@ mod tests {
             key: &str,
             prefixes: &[String],
         ) -> Result<Option<RestoredEntry>, CacheError> {
-            if self.fail_restore {
+            if self.fail_restore || (self.fail_pack_restore && key.contains("-pack-")) {
                 return Err(CacheError::BackendUnavailable("down".into()));
+            }
+            if self.slow_key.is_some_and(|s| key.contains(s)) {
+                tokio::time::sleep(std::time::Duration::from_millis(80)).await;
             }
             let e = self.entries.lock().unwrap();
             let found = e.iter().find(|(k, _)| k == key).or_else(|| {
@@ -710,12 +746,10 @@ mod tests {
             ..Default::default()
         });
         let d = TempDir::new().unwrap();
-        let b = PackBackend::open(cfg(&d, "1-1"), t).await.unwrap();
-        assert!(b
-            .contains(EntryKind::CAS, &"a".repeat(64), -1)
-            .await
-            .unwrap()
-            .is_none());
+        let b = PackBackend::open(cfg(&d, "1-1"), t.clone()).await.unwrap();
+        put(&b, EntryKind::CAS, b"x").await;
+        assert!(b.flush().await.unwrap().skipped_reason.is_some());
+        assert_eq!(t.count(), 0);
     }
 
     fn tar_zst(entries: &[(&str, &[u8])]) -> Vec<u8> {
@@ -820,6 +854,7 @@ mod tests {
         let flaky = Arc::new(FakeTransport {
             entries: StdMutex::new(healthy.entries.lock().unwrap().clone()),
             fail_restore: true,
+            ..Default::default()
         });
         let d = TempDir::new().unwrap();
         let b = PackBackend::open(cfg(&d, "2-1"), flaky.clone())
@@ -829,5 +864,110 @@ mod tests {
         let r = b.flush().await.unwrap();
         assert!(r.skipped_reason.is_some());
         assert_eq!(flaky.count(), healthy.count(), "nothing may be published");
+    }
+
+    #[tokio::test]
+    async fn packs_are_applied_in_manifest_order_even_when_downloads_finish_out_of_order() {
+        let t = Arc::new(FakeTransport::default());
+        let key = "d".repeat(64);
+        for (run, body) in [("1-1", "v1"), ("2-1", "v2"), ("3-1", "v3")] {
+            let d = TempDir::new().unwrap();
+            let b = PackBackend::open(cfg(&d, run), t.clone()).await.unwrap();
+            b.put(
+                EntryKind::AC,
+                &key,
+                2,
+                Box::new(std::io::Cursor::new(body.as_bytes().to_vec())),
+            )
+            .await
+            .unwrap();
+            b.flush().await.unwrap();
+        }
+        let slow = Arc::new(FakeTransport {
+            entries: StdMutex::new(t.entries.lock().unwrap().clone()),
+            slow_key: Some("-pack-1-1-"),
+            ..Default::default()
+        });
+        let d = TempDir::new().unwrap();
+        let b = PackBackend::open(cfg(&d, "4-1"), slow).await.unwrap();
+        assert_eq!(read(&b, EntryKind::AC, &key).await.unwrap(), b"v3");
+    }
+
+    #[tokio::test]
+    async fn transient_pack_download_error_blocks_publishing() {
+        let healthy = Arc::new(FakeTransport::default());
+        let d0 = TempDir::new().unwrap();
+        let seed = PackBackend::open(cfg(&d0, "1-1"), healthy.clone())
+            .await
+            .unwrap();
+        put(&seed, EntryKind::CAS, b"precious").await;
+        seed.flush().await.unwrap();
+
+        let flaky = Arc::new(FakeTransport {
+            entries: StdMutex::new(healthy.entries.lock().unwrap().clone()),
+            fail_pack_restore: true,
+            ..Default::default()
+        });
+        let d = TempDir::new().unwrap();
+        let b = PackBackend::open(cfg(&d, "2-1"), flaky.clone())
+            .await
+            .unwrap();
+        put(&b, EntryKind::CAS, b"new work").await;
+        assert!(b.flush().await.unwrap().skipped_reason.is_some());
+        assert_eq!(flaky.count(), healthy.count());
+    }
+
+    #[tokio::test]
+    async fn a_second_flush_after_compaction_has_nothing_to_do() {
+        let t = Arc::new(FakeTransport::default());
+        let (d1, d2) = (TempDir::new().unwrap(), TempDir::new().unwrap());
+        let a = PackBackend::open(cfg(&d1, "1-1"), t.clone()).await.unwrap();
+        put(&a, EntryKind::CAS, b"one").await;
+        a.flush().await.unwrap();
+        t.entries
+            .lock()
+            .unwrap()
+            .retain(|(k, _)| !k.contains("-pack-"));
+        let b = PackBackend::open(cfg(&d2, "2-1"), t.clone()).await.unwrap();
+        put(&b, EntryKind::CAS, b"two").await;
+        assert!(b.flush().await.unwrap().compacted);
+        let again = b.flush().await.unwrap();
+        assert_eq!(again.skipped_reason.as_deref(), Some("no new blobs"));
+    }
+
+    #[tokio::test]
+    async fn blobs_larger_than_max_pack_bytes_are_not_published_and_do_not_block_others() {
+        let t = Arc::new(FakeTransport::default());
+        let d = TempDir::new().unwrap();
+        let mut c = cfg(&d, "1-1");
+        c.max_pack_bytes = 1 << 20;
+        let b = PackBackend::open(c, t.clone()).await.unwrap();
+        // Random-looking data so the size check, not compression, is what is exercised.
+        let big: Vec<u8> = (0..(2u32 << 20))
+            .map(|i| (i.wrapping_mul(2654435761) >> 24) as u8)
+            .collect();
+        put(&b, EntryKind::CAS, &big).await;
+        let small = put(&b, EntryKind::CAS, b"small").await;
+        let r = b.flush().await.unwrap();
+        assert_eq!(r.blobs_uploaded, 1);
+        let d2 = TempDir::new().unwrap();
+        let again = PackBackend::open(cfg(&d2, "2-1"), t).await.unwrap();
+        assert!(read(&again, EntryKind::CAS, &small).await.is_some());
+    }
+
+    #[tokio::test]
+    async fn invalid_config_is_rejected() {
+        let t = Arc::new(FakeTransport::default());
+        let d = TempDir::new().unwrap();
+        for mutate in [
+            (|c: &mut PackConfig| c.prefix = "a,b".into()) as fn(&mut PackConfig),
+            |c| c.prefix = String::new(),
+            |c| c.max_packs = 0,
+            |c| c.max_pack_bytes = 0,
+        ] {
+            let mut c = cfg(&d, "1-1");
+            mutate(&mut c);
+            assert!(PackBackend::open(c, t.clone()).await.is_err());
+        }
     }
 }

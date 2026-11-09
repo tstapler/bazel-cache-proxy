@@ -33,7 +33,7 @@ impl GhaClient {
 
     pub fn new(results_url: String, token: String, version_salt: &str) -> Result<Self, CacheError> {
         let http = Client::builder()
-            .timeout(std::time::Duration::from_secs(120))
+            .timeout(std::time::Duration::from_secs(600))
             .build()
             .map_err(|e| CacheError::Internal(e.to_string()))?;
         let version = format!("{:x}", Sha256::digest(version_salt.as_bytes()));

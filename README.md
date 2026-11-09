@@ -14,8 +14,8 @@ job gets a persistent `--remote_cache` with no cache server, cloud account or pa
 
 Inside a job the proxy serves Bazel from a local disk cache on loopback. At startup it restores
 the newest *manifest* from the GitHub Actions cache and unpacks the *packs* it lists; on
-shutdown (or `POST /admin/flush`) it uploads only the blobs written during this job as one
-new pack plus a new manifest. GitHub cache entries are immutable and the service allows
+shutdown (or `POST /admin/flush`) it uploads only the blobs written during this job as new
+pack(s) plus a new manifest (or, every `max_packs` packs, a fresh copy of the whole cache). GitHub cache entries are immutable and the service allows
 [200 uploads per minute per repository](https://docs.github.com/en/actions/reference/workflows-and-actions/dependency-caching),
 so one entry per Bazel blob does not scale; a few packs per job do.
 Design rationale: [docs/explanation/design.md](docs/explanation/design.md).
@@ -36,16 +36,19 @@ steps:
       cat > proxy.toml <<'TOML'
       [backend]
       type = "gha"
-      prefix = "bazel-${{ runner.os }}-${{ github.workflow }}"
+      prefix = "bazel-linux-ci"   # distinct per workflow/job; only [A-Za-z0-9._-]
       TOML
       ./bazel-cache-proxy serve --config proxy.toml > proxy.log 2>&1 &
-      for _ in $(seq 50); do curl -fsS localhost:9090/healthz && break; sleep 0.2; done
+      # restore runs before the listener binds, so allow time for a large cache
+      for _ in $(seq 300); do curl -fsS localhost:9090/healthz && break; sleep 0.2; done
   - run: bazel build --remote_cache=http://127.0.0.1:9090/cache //...
   - name: Publish cache
     if: always()
-    run: curl -fsS -X POST localhost:9090/admin/flush
+    run: curl -fsS --max-time 600 -X POST localhost:9090/admin/flush
 ```
 
+The flush response says what was uploaded; `skipped_reason` explains a no-op (nothing new, uploads
+disabled, or an earlier restore error that makes publishing unsafe, which also logs a warning).
 Equivalent `.bazelrc` line: `build:ci --remote_cache=http://127.0.0.1:9090/cache`.
 Set `BAZEL_CACHE_PROXY_UPLOAD=false` (or `upload = false`) on pull requests that should read
 the cache but not write it. More: [docs/how-to/use-in-github-actions.md](docs/how-to/use-in-github-actions.md).
@@ -80,8 +83,14 @@ and signed storage URLs are never logged. See [SECURITY.md](SECURITY.md).
   restore. Budget a few times `max_pack_bytes`; one blob larger than that becomes its own pack.
 - Each compaction (every `max_packs` packs) leaves the old packs and manifests in the
   repository budget until GitHub evicts them.
-- Bazel compression flags (`--remote_cache_compression`) are not tested with the HTTP endpoint.
-- The whole local cache of a run is bounded by `max_local_bytes` (default 4 GiB).
+- `--remote_cache_compression` is accepted but has no effect over HTTP (Bazel sends uncompressed
+  blobs; CI runs the smoke test with it and `--remote_download_toplevel`).
+- `max_local_bytes` (default 4 GiB) bounds the local cache once builds write to it; a restored
+  chain larger than that is not trimmed until the first write.
+- AC and CAS entries are evicted independently, so an AC entry can outlive blobs it references.
+  With `--remote_download_toplevel` set `--experimental_remote_cache_eviction_retries=5` so Bazel
+  recovers instead of failing.
+- Blobs larger than `max_pack_bytes` (default 200 MiB) are never persisted.
 
 ## Documentation
 

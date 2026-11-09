@@ -19,7 +19,7 @@ fi
 
 "$proxy_bin" serve --config "$config" >"$work/proxy.log" 2>&1 &
 proxy_pid=$!
-for _ in $(seq 50); do curl -fsS http://127.0.0.1:9090/healthz >/dev/null 2>&1 && break; sleep 0.2; done
+for _ in $(seq 300); do curl -fsS http://127.0.0.1:9090/healthz >/dev/null 2>&1 && break; sleep 0.2; done
 
 cd "$repo/tests/bazel-smoke"
 bazel clean >/dev/null 2>&1 # outputs left by an earlier run would skip the uploads under test

@@ -2,7 +2,8 @@
 
 1. Export the cache credentials with an action (`crazy-max/ghaction-github-runtime`, pinned to a
    SHA). Plain `run:` steps do not get `ACTIONS_RESULTS_URL` / `ACTIONS_RUNTIME_TOKEN`.
-2. Start `bazel-cache-proxy serve --config proxy.toml` in the background and wait for `/healthz`.
+2. Start `bazel-cache-proxy serve --config proxy.toml` in the background and wait for `/healthz`
+   (up to a minute: the restore finishes before the listener binds).
 3. Pass `--remote_cache=http://127.0.0.1:9090/cache` to Bazel.
 4. After the build, with `if: always()`, `curl -X POST http://127.0.0.1:9090/admin/flush`.
    Killing the proxy with SIGTERM also flushes, but the endpoint reports what was uploaded.

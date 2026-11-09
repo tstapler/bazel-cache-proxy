@@ -199,6 +199,10 @@ impl StorageBackend for DiskBackend {
         // hash of the stored ActionResult.
         let verified = match kind {
             EntryKind::CAS => hashing_writer.finalize(&expected),
+            EntryKind::AC if actual_written != effective_size => Err(CacheError::SizeMismatch {
+                expected: effective_size,
+                actual: actual_written,
+            }),
             EntryKind::AC => Ok(()),
         };
         match verified {
@@ -456,5 +460,20 @@ mod tests {
             .await
             .unwrap()
             .is_some());
+    }
+
+    #[tokio::test]
+    async fn disk_backend_rejects_action_cache_entry_with_wrong_declared_size() {
+        let (backend, _dir) = make_backend(1024 * 1024).await;
+        let err = backend
+            .put(
+                EntryKind::AC,
+                &"b".repeat(64),
+                999,
+                Box::new(std::io::Cursor::new(b"short".to_vec())),
+            )
+            .await
+            .unwrap_err();
+        assert!(matches!(err, CacheError::SizeMismatch { .. }));
     }
 }

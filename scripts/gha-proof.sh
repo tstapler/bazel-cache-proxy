@@ -21,7 +21,7 @@ TOML
 
 "$proxy_bin" serve --config "$work/config.toml" >"$work/proxy.log" 2>&1 &
 proxy_pid=$!
-for _ in $(seq 50); do curl -fsS http://127.0.0.1:9090/healthz >/dev/null 2>&1 && break; sleep 0.2; done
+for _ in $(seq 300); do curl -fsS http://127.0.0.1:9090/healthz >/dev/null 2>&1 && break; sleep 0.2; done
 grep -E "restored|no cache manifest|starting cold|restore failed" "$work/proxy.log" || true
 
 cd "$repo/tests/bazel-smoke"
@@ -40,6 +40,9 @@ if [[ $code != 200 ]]; then
   exit 1
 fi
 flush=$(cat "$work/flush.json")
+if grep -q '"skipped_reason":"restore failed' <<<"$flush"; then
+  echo "::warning::cache restore failed earlier in this run; nothing was published"
+fi
 metrics=$(curl -fsS http://127.0.0.1:9090/metrics | grep -E '^bazel_cache_(lookups|put)' || true)
 kill "$proxy_pid"; wait "$proxy_pid" || true
 
