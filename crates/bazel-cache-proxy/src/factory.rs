@@ -64,8 +64,12 @@ async fn build_gha(c: &crate::config::GhaConfig) -> Arc<dyn StorageBackend> {
             .join("bazel-cache-proxy")
     });
     let upload = c.upload
-        && !std::env::var("BAZEL_CACHE_PROXY_UPLOAD")
-            .is_ok_and(|v| v.eq_ignore_ascii_case("false"));
+        && !std::env::var("BAZEL_CACHE_PROXY_UPLOAD").is_ok_and(|v| {
+            matches!(
+                v.to_ascii_lowercase().as_str(),
+                "false" | "0" | "no" | "off"
+            )
+        });
     let cfg = PackConfig {
         prefix: c.prefix.clone(),
         root: root.clone(),

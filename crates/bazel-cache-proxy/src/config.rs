@@ -100,7 +100,7 @@ fn default_gha_pack_size() -> ByteSize {
     ByteSize::mib(200)
 }
 fn default_gha_max_packs() -> usize {
-    8
+    24
 }
 fn default_true() -> bool {
     true

@@ -72,6 +72,14 @@ and signed storage URLs are never logged. See [SECURITY.md](SECURITY.md).
   uncompressed per pack).
 - Cache scoping follows GitHub's rules: pull-request runs write to their own merge-ref scope
   and read the base branch's.
+- **Last writer wins per prefix.** Two jobs that start from the same manifest each publish a
+  manifest listing the old packs plus their own; the newer manifest hides the other's new
+  packs (they become garbage until evicted). Give concurrent jobs (matrix legs) distinct
+  `prefix` values, or let only one of them upload.
+- Memory: a pack is built and uploaded from memory, and up to four are downloaded at once on
+  restore. Budget a few times `max_pack_bytes`; one blob larger than that becomes its own pack.
+- Each compaction (every `max_packs` packs) leaves the old packs and manifests in the
+  repository budget until GitHub evicts them.
 - Bazel compression flags (`--remote_cache_compression`) are not tested with the HTTP endpoint.
 - The whole local cache of a run is bounded by `max_local_bytes` (default 4 GiB).
 

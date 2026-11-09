@@ -18,8 +18,8 @@ override top-level keys (figment). Validate with `validate-config --config <file
 | `root` | `$RUNNER_TEMP/bazel-cache-proxy` | Local working cache |
 | `max_local_bytes` | `4 GiB` | LRU bound for the local cache |
 | `max_pack_bytes` | `200 MiB` | Uncompressed size per pack (held in memory while uploading) |
-| `max_packs` | `8` | When a manifest would list more packs, the whole cache is rewritten as fresh packs |
-| `upload` | `true` | Publish on flush. `BAZEL_CACHE_PROXY_UPLOAD=false` forces `false` |
+| `max_packs` | `24` | When a manifest would list more packs, the whole cache is rewritten as fresh packs |
+| `upload` | `true` | Publish on flush. `BAZEL_CACHE_PROXY_UPLOAD` set to `false`, `0`, `no` or `off` forces `false` |
 
 Credentials: `ACTIONS_RESULTS_URL` and `ACTIONS_RUNTIME_TOKEN`. When absent the proxy logs a
 warning and serves a local-only disk cache.

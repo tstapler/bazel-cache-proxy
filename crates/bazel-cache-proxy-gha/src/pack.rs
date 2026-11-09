@@ -55,7 +55,13 @@ impl PackConfig {
             std::env::var("GITHUB_RUN_ID"),
             std::env::var("GITHUB_RUN_ATTEMPT"),
         ) {
-            (Ok(id), Ok(attempt)) if !id.is_empty() => format!("{id}-{attempt}"),
+            // The nonce keeps concurrent jobs of one run (matrix legs) from colliding on keys.
+            (Ok(id), Ok(attempt)) if !id.is_empty() => {
+                format!(
+                    "{id}-{attempt}-{}",
+                    &uuid::Uuid::new_v4().simple().to_string()[..8]
+                )
+            }
             _ => uuid::Uuid::new_v4().to_string(),
         }
     }
@@ -78,8 +84,21 @@ struct Manifest {
 struct State {
     packs: Vec<PackRef>,
     new_blobs: HashSet<(EntryKind, String)>,
-    /// A pack listed by the restored manifest could not be fetched (evicted or corrupt).
+    /// A pack listed by the restored manifest is gone or corrupt (evicted); republish all.
     degraded: bool,
+    /// The restore hit a transient error, so the chain may be longer than what was loaded.
+    /// Publishing a manifest now would hide the packs we failed to see.
+    restore_unsafe: bool,
+    /// Distinguishes successive flushes of this process in key names.
+    flush_seq: u64,
+}
+
+struct Restored {
+    packs: Vec<PackRef>,
+    degraded: bool,
+    transient_error: bool,
+    blobs: u64,
+    bytes: u64,
 }
 
 pub struct PackBackend {
@@ -87,6 +106,8 @@ pub struct PackBackend {
     transport: Arc<dyn CacheTransport>,
     cfg: PackConfig,
     state: Mutex<State>,
+    /// Serialises flushes without holding `state` (which `put` needs) across network I/O.
+    flush_lock: Mutex<()>,
 }
 
 impl PackBackend {
@@ -99,23 +120,34 @@ impl PackBackend {
         tokio::fs::create_dir_all(&cfg.root)
             .await
             .map_err(|e| CacheError::Io(e.to_string()))?;
+        if cfg.max_local_bytes / cfg.max_pack_bytes.max(1) > cfg.max_packs as u64 {
+            warn!(
+                "max_local_bytes / max_pack_bytes exceeds max_packs: a full cache will be \
+                 republished on every run; raise max_packs or max_pack_bytes"
+            );
+        }
         let started = std::time::Instant::now();
         let mut state = State::default();
         match Self::restore(&cfg, transport.as_ref()).await {
-            Ok(Some((packs, degraded, blobs, bytes))) => {
+            Ok(Some(r)) => {
                 info!(
-                    packs = packs.len(),
-                    blobs,
-                    bytes,
-                    degraded,
+                    packs = r.packs.len(),
+                    blobs = r.blobs,
+                    bytes = r.bytes,
+                    degraded = r.degraded,
+                    transient_error = r.transient_error,
                     elapsed_ms = started.elapsed().as_millis() as u64,
                     "restored cache packs"
                 );
-                state.packs = packs;
-                state.degraded = degraded;
+                state.packs = r.packs;
+                state.degraded = r.degraded;
+                state.restore_unsafe = r.transient_error;
             }
             Ok(None) => info!("no cache manifest found; starting cold"),
-            Err(e) => warn!("cache restore failed ({e}); starting cold"),
+            Err(e) => {
+                warn!("cache restore failed ({e}); serving cold and not publishing this run");
+                state.restore_unsafe = true;
+            }
         }
         let local = DiskBackend::new(cfg.root.clone(), cfg.max_local_bytes).await?;
         Ok(Self {
@@ -123,20 +155,21 @@ impl PackBackend {
             transport,
             cfg,
             state: Mutex::new(state),
+            flush_lock: Mutex::new(()),
         })
     }
 
-    fn manifest_key(cfg: &PackConfig) -> String {
-        format!("{}-manifest-{}", cfg.prefix, cfg.run_id)
+    fn manifest_key(cfg: &PackConfig, seq: u64) -> String {
+        format!("{}-manifest-{}-f{seq}", cfg.prefix, cfg.run_id)
     }
 
     async fn restore(
         cfg: &PackConfig,
         transport: &dyn CacheTransport,
-    ) -> Result<Option<(Vec<PackRef>, bool, u64, u64)>, CacheError> {
+    ) -> Result<Option<Restored>, CacheError> {
         let prefixes = [format!("{}-manifest-", cfg.prefix)];
         let Some(entry) = transport
-            .restore(&Self::manifest_key(cfg), &prefixes)
+            .restore(&Self::manifest_key(cfg, 0), &prefixes)
             .await?
         else {
             return Ok(None);
@@ -155,11 +188,18 @@ impl PackBackend {
                 let fetched = transport.restore(&pack.key, &[]).await;
                 (pack, fetched)
             })
-            .buffer_unordered(RESTORE_CONCURRENCY)
+            // Ordered: packs are applied oldest first so a later AC rewrite wins.
+            .buffered(RESTORE_CONCURRENCY)
             .collect()
             .await;
 
-        let (mut loaded, mut degraded, mut blobs, mut bytes) = (Vec::new(), false, 0u64, 0u64);
+        let mut r = Restored {
+            packs: Vec::new(),
+            degraded: false,
+            transient_error: false,
+            blobs: 0,
+            bytes: 0,
+        };
         for (pack, fetched) in results {
             match fetched {
                 Ok(Some(e)) => {
@@ -169,32 +209,31 @@ impl PackBackend {
                         .map_err(|e| CacheError::Internal(e.to_string()))?;
                     match n {
                         Ok(stats) => {
-                            blobs += stats.written;
-                            bytes += pack.bytes;
+                            r.blobs += stats.written;
+                            r.bytes += pack.bytes;
                             if stats.rejected > 0 {
                                 warn!(pack = %pack.key, rejected = stats.rejected, "rejected invalid pack entries");
-                                degraded = true;
+                                r.degraded = true;
                             }
-                            loaded.push(pack);
+                            r.packs.push(pack);
                         }
                         Err(e) => {
                             warn!(pack = %pack.key, "unpack failed: {e}");
-                            degraded = true;
+                            r.degraded = true;
                         }
                     }
                 }
                 Ok(None) => {
                     warn!(pack = %pack.key, "pack listed in manifest is gone (evicted?)");
-                    degraded = true;
+                    r.degraded = true;
                 }
                 Err(e) => {
                     warn!(pack = %pack.key, "pack download failed: {e}");
-                    degraded = true;
+                    r.transient_error = true;
                 }
             }
         }
-        loaded.sort_by(|a, b| a.key.cmp(&b.key));
-        Ok(Some((loaded, degraded, blobs, bytes)))
+        Ok(Some(r))
     }
 
     fn list_local(root: &Path) -> Vec<(EntryKind, String)> {
@@ -351,50 +390,97 @@ impl StorageBackend for PackBackend {
     }
 
     async fn flush(&self) -> Result<FlushReport, CacheError> {
-        if !self.cfg.upload {
-            return Ok(FlushReport {
-                skipped_reason: Some("upload disabled".into()),
+        let skipped = |why: &str| {
+            Ok(FlushReport {
+                skipped_reason: Some(why.into()),
                 ..Default::default()
-            });
-        }
-        let mut state = self.state.lock().await;
-        if state.new_blobs.is_empty() && !state.degraded {
-            return Ok(FlushReport {
-                skipped_reason: Some("no new blobs".into()),
-                ..Default::default()
-            });
-        }
-        let root = self.cfg.root.clone();
-        let mut new: Vec<_> = state.new_blobs.iter().cloned().collect();
-        new.sort_by(|a, b| a.1.cmp(&b.1));
-        let new_chunks = chunk_by_size(&root, new, self.cfg.max_pack_bytes);
-
-        let compact = state.degraded || state.packs.len() + new_chunks.len() > self.cfg.max_packs;
-        let (chunks, mut keep) = if compact {
-            let all = Self::list_local(&root);
-            (
-                chunk_by_size(&root, all, self.cfg.max_pack_bytes),
-                Vec::new(),
-            )
-        } else {
-            (new_chunks, state.packs.clone())
+            })
         };
+        if !self.cfg.upload {
+            return skipped("upload disabled");
+        }
+        let _flushing = self.flush_lock.lock().await;
 
+        // Take the pending set so concurrent `put`s are never blocked by network I/O below.
+        let (taken, packs, degraded, seq) = {
+            let mut st = self.state.lock().await;
+            if st.restore_unsafe {
+                return skipped("restore failed earlier; publishing would hide existing packs");
+            }
+            if st.new_blobs.is_empty() && !st.degraded {
+                return skipped("no new blobs");
+            }
+            st.flush_seq += 1;
+            (
+                std::mem::take(&mut st.new_blobs),
+                st.packs.clone(),
+                st.degraded,
+                st.flush_seq,
+            )
+        };
+        match self.publish(&taken, packs, degraded, seq).await {
+            Ok((report, keep)) => {
+                let mut st = self.state.lock().await;
+                st.packs = keep;
+                st.degraded = false;
+                Ok(report)
+            }
+            Err(e) => {
+                self.state.lock().await.new_blobs.extend(taken);
+                Err(e)
+            }
+        }
+    }
+}
+
+impl PackBackend {
+    async fn publish(
+        &self,
+        taken: &HashSet<(EntryKind, String)>,
+        packs: Vec<PackRef>,
+        degraded: bool,
+        seq: u64,
+    ) -> Result<(FlushReport, Vec<PackRef>), CacheError> {
+        let root = self.cfg.root.clone();
+        let (max_pack, max_packs) = (self.cfg.max_pack_bytes, self.cfg.max_packs);
+        let mut new: Vec<_> = taken.iter().cloned().collect();
+        new.sort_by(|a, b| a.1.cmp(&b.1));
+        let plan_root = root.clone();
+        let (chunks, compact) = tokio::task::spawn_blocking(move || {
+            let new_chunks = chunk_by_size(&plan_root, new, max_pack);
+            if degraded || packs.len() + new_chunks.len() > max_packs {
+                let all = Self::list_local(&plan_root);
+                (chunk_by_size(&plan_root, all, max_pack), true, packs)
+            } else {
+                (new_chunks, false, packs)
+            }
+        })
+        .await
+        .map(|(c, compact, p)| ((c, p), compact))
+        .map_err(|e| CacheError::Internal(e.to_string()))?;
+        let (chunks, existing) = chunks;
+
+        let mut keep = if compact { Vec::new() } else { existing };
         let mut report = FlushReport {
             compacted: compact,
             ..Default::default()
         };
         for (i, chunk) in chunks.into_iter().enumerate() {
-            let key = format!("{}-pack-{}-{i}", self.cfg.prefix, self.cfg.run_id);
+            let key = format!("{}-pack-{}-f{seq}-{i}", self.cfg.prefix, self.cfg.run_id);
             let r = root.clone();
             let (bytes, blobs) = tokio::task::spawn_blocking(move || build_pack(&r, &chunk))
                 .await
                 .map_err(|e| CacheError::Internal(e.to_string()))?
                 .map_err(|e| CacheError::Io(e.to_string()))?;
+            if blobs == 0 {
+                continue; // every blob was evicted locally since it was written
+            }
             let len = bytes.len() as u64;
-            match self.transport.save(&key, bytes).await? {
-                SaveOutcome::Saved => {}
-                SaveOutcome::AlreadyExists => warn!(%key, "pack key already exists; reusing"),
+            // Keys are unique per process and flush; a collision would silently drop data.
+            if self.transport.save(&key, bytes).await? == SaveOutcome::AlreadyExists {
+                return Err(CacheError::Internal(format!(
+                    "pack key {key} already exists"
+                )));
             }
             report.packs_uploaded += 1;
             report.blobs_uploaded += blobs;
@@ -412,13 +498,14 @@ impl StorageBackend for PackBackend {
         };
         let body =
             serde_json::to_vec(&manifest).map_err(|e| CacheError::Internal(e.to_string()))?;
-        let key = Self::manifest_key(&self.cfg);
-        self.transport.save(&key, body).await?;
+        let key = Self::manifest_key(&self.cfg, seq);
+        if self.transport.save(&key, body).await? == SaveOutcome::AlreadyExists {
+            return Err(CacheError::Internal(format!(
+                "manifest key {key} already exists"
+            )));
+        }
         report.manifest_key = Some(key);
-        state.packs = keep;
-        state.new_blobs.clear();
-        state.degraded = false;
-        Ok(report)
+        Ok((report, keep))
     }
 }
 
@@ -606,7 +693,7 @@ mod tests {
         t.entries
             .lock()
             .unwrap()
-            .retain(|(k, _)| k != "t-pack-1-1-0"); // evict run 1's pack
+            .retain(|(k, _)| k != "t-pack-1-1-f1-0"); // evict run 1's pack
 
         let c = PackBackend::open(cfg(&d3, "3-1"), t.clone()).await.unwrap();
         assert!(read(&c, EntryKind::CAS, &h1).await.is_none());
@@ -660,5 +747,87 @@ mod tests {
         assert!(!dir.path().join("CAS").join(&bad_name).exists());
         assert!(dir.path().join("AC").join(&bad_name).exists());
         assert!(!dir.path().join("etc").exists());
+    }
+
+    #[tokio::test]
+    async fn repeated_flush_in_one_process_keeps_every_blob() {
+        let t = Arc::new(FakeTransport::default());
+        let (d1, d2) = (TempDir::new().unwrap(), TempDir::new().unwrap());
+        let a = PackBackend::open(cfg(&d1, "1-1"), t.clone()).await.unwrap();
+        let h1 = put(&a, EntryKind::CAS, b"before-flush").await;
+        a.flush().await.unwrap();
+        let h2 = put(&a, EntryKind::CAS, b"after-flush").await;
+        let r = a.flush().await.unwrap();
+        assert_eq!(r.blobs_uploaded, 1);
+
+        let b = PackBackend::open(cfg(&d2, "2-1"), t.clone()).await.unwrap();
+        assert!(read(&b, EntryKind::CAS, &h1).await.is_some());
+        assert!(read(&b, EntryKind::CAS, &h2).await.is_some());
+    }
+
+    #[tokio::test]
+    async fn key_collision_is_an_error_not_silent_loss() {
+        let t = Arc::new(FakeTransport::default());
+        let (d1, d2) = (TempDir::new().unwrap(), TempDir::new().unwrap());
+        let a = PackBackend::open(cfg(&d1, "same"), t.clone())
+            .await
+            .unwrap();
+        let b = PackBackend::open(cfg(&d2, "same"), t.clone())
+            .await
+            .unwrap();
+        put(&a, EntryKind::CAS, b"a").await;
+        put(&b, EntryKind::CAS, b"b").await;
+        a.flush().await.unwrap();
+        assert!(b.flush().await.is_err());
+        // The failed flush keeps its blobs pending for a retry.
+        assert_eq!(b.state.lock().await.new_blobs.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn newer_ac_entry_wins_across_packs() {
+        let t = Arc::new(FakeTransport::default());
+        let key = "c".repeat(64);
+        for (run, body) in [("1-1", "old"), ("2-1", "new")] {
+            let d = TempDir::new().unwrap();
+            let b = PackBackend::open(cfg(&d, run), t.clone()).await.unwrap();
+            b.put(
+                EntryKind::AC,
+                &key,
+                body.len() as i64,
+                Box::new(std::io::Cursor::new(body.as_bytes().to_vec())),
+            )
+            .await
+            .unwrap();
+            b.flush().await.unwrap();
+        }
+        for _ in 0..5 {
+            let d = TempDir::new().unwrap();
+            let b = PackBackend::open(cfg(&d, "9-1"), t.clone()).await.unwrap();
+            assert_eq!(read(&b, EntryKind::AC, &key).await.unwrap(), b"new");
+        }
+    }
+
+    #[tokio::test]
+    async fn failed_restore_never_publishes_a_chain_that_hides_old_packs() {
+        let healthy = Arc::new(FakeTransport::default());
+        let d0 = TempDir::new().unwrap();
+        let seed = PackBackend::open(cfg(&d0, "1-1"), healthy.clone())
+            .await
+            .unwrap();
+        put(&seed, EntryKind::CAS, b"precious").await;
+        seed.flush().await.unwrap();
+
+        let flaky = Arc::new(FakeTransport {
+            entries: StdMutex::new(healthy.entries.lock().unwrap().clone()),
+            fail_restore: true,
+        });
+        let d = TempDir::new().unwrap();
+        let b = PackBackend::open(cfg(&d, "2-1"), flaky.clone())
+            .await
+            .unwrap();
+        put(&b, EntryKind::CAS, b"new work").await;
+        let r = b.flush().await.unwrap();
+        assert!(r.skipped_reason.is_some());
+        assert_eq!(flaky.count(), healthy.count(), "nothing may be published");
     }
 }
