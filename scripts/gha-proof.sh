@@ -33,7 +33,13 @@ hits=$(grep -Eo '[0-9]+ remote cache hit' "$work/bazel.log" | grep -Eo '^[0-9]+'
 
 # Persist what this build produced, then shut down (SIGTERM also flushes; the endpoint is the
 # explicit, observable path).
-flush=$(curl -fsS -X POST http://127.0.0.1:9090/admin/flush)
+code=$(curl -sS -o "$work/flush.json" -w '%{http_code}' -X POST http://127.0.0.1:9090/admin/flush)
+if [[ $code != 200 ]]; then
+  echo "flush failed: HTTP $code: $(cat "$work/flush.json")" >&2
+  echo "--- proxy log ---" >&2; cat "$work/proxy.log" >&2
+  exit 1
+fi
+flush=$(cat "$work/flush.json")
 metrics=$(curl -fsS http://127.0.0.1:9090/metrics | grep -E '^bazel_cache_(lookups|put)' || true)
 kill "$proxy_pid"; wait "$proxy_pid" || true
 

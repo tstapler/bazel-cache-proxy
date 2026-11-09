@@ -22,7 +22,8 @@ proxy_pid=$!
 for _ in $(seq 50); do curl -fsS http://127.0.0.1:9090/healthz >/dev/null 2>&1 && break; sleep 0.2; done
 
 cd "$repo/tests/bazel-smoke"
-flags=(--remote_cache=http://127.0.0.1:9090/cache --disk_cache= \
+bazel clean >/dev/null 2>&1 # outputs left by an earlier run would skip the uploads under test
+flags=(${SMOKE_EXTRA_FLAGS:-} --remote_cache=http://127.0.0.1:9090/cache --disk_cache= \
        --execution_log_json_file="$work/exec.json" --profile="$work/profile.gz")
 
 bazel build "${flags[@]}" //:combined 2>&1 | tail -3
