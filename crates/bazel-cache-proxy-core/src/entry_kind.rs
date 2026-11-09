@@ -1,6 +1,6 @@
+use crate::error::CacheError;
 use std::fmt;
 use std::str::FromStr;
-use crate::error::CacheError;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum EntryKind {

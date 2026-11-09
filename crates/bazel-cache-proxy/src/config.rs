@@ -1,6 +1,6 @@
-use std::path::PathBuf;
 use bytesize::ByteSize;
 use serde::Deserialize;
+use std::path::PathBuf;
 
 #[derive(Debug, Deserialize)]
 pub struct Config {
@@ -19,9 +19,15 @@ pub struct Config {
     pub backend: BackendConfig,
 }
 
-fn default_http_addr() -> String { "0.0.0.0:9090".to_string() }
-fn default_grpc_addr() -> String { "0.0.0.0:9091".to_string() }
-fn default_metrics_path() -> String { "/metrics".to_string() }
+fn default_http_addr() -> String {
+    "0.0.0.0:9090".to_string()
+}
+fn default_grpc_addr() -> String {
+    "0.0.0.0:9091".to_string()
+}
+fn default_metrics_path() -> String {
+    "/metrics".to_string()
+}
 
 #[derive(Debug, Deserialize)]
 #[serde(tag = "type", rename_all = "lowercase")]
@@ -41,7 +47,9 @@ pub struct DiskConfig {
     pub max_size_bytes: ByteSize,
 }
 
-fn default_max_size() -> ByteSize { ByteSize::gib(10) }
+fn default_max_size() -> ByteSize {
+    ByteSize::gib(10)
+}
 
 #[derive(Debug, Deserialize, Clone)]
 pub struct S3Config {
@@ -83,7 +91,10 @@ pub struct LayeredConfig {
 
 impl Config {
     pub fn from_file(path: &std::path::Path) -> Result<Self, Box<dyn std::error::Error>> {
-        use figment::{Figment, providers::{Toml, Env, Format}};
+        use figment::{
+            providers::{Env, Format, Toml},
+            Figment,
+        };
         let config: Config = Figment::new()
             .merge(Toml::file(path))
             .merge(Env::prefixed("BAZEL_CACHE_"))

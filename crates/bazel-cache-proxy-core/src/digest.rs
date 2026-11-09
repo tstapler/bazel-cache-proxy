@@ -1,6 +1,6 @@
+use crate::error::CacheError;
 use std::fmt;
 use std::str::FromStr;
-use crate::error::CacheError;
 
 /// SHA-256 digest identifying a cache entry.
 /// Hash must be exactly 64 lowercase hex characters; size must be >= 0.
@@ -11,8 +11,7 @@ pub struct Digest {
 }
 
 /// SHA-256 of empty input.
-pub const EMPTY_SHA256: &str =
-    "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855";
+pub const EMPTY_SHA256: &str = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855";
 
 impl Digest {
     pub fn new(hash: impl Into<String>, size: i64) -> Result<Self, CacheError> {
@@ -67,9 +66,9 @@ impl FromStr for Digest {
     type Err = CacheError;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        let (hash, size_str) = s.split_once('/').ok_or_else(|| {
-            CacheError::InvalidDigest(format!("expected 'hash/size', got {s:?}"))
-        })?;
+        let (hash, size_str) = s
+            .split_once('/')
+            .ok_or_else(|| CacheError::InvalidDigest(format!("expected 'hash/size', got {s:?}")))?;
         let size = size_str.parse::<i64>().map_err(|_| {
             CacheError::InvalidDigest(format!("size is not a valid i64: {size_str:?}"))
         })?;
@@ -93,25 +92,37 @@ mod tests {
     #[test]
     fn digest_new_rejects_63_hex_chars() {
         let short = "a".repeat(63);
-        assert!(matches!(Digest::new(short, 0), Err(CacheError::InvalidDigest(_))));
+        assert!(matches!(
+            Digest::new(short, 0),
+            Err(CacheError::InvalidDigest(_))
+        ));
     }
 
     #[test]
     fn digest_new_rejects_65_hex_chars() {
         let long = "a".repeat(65);
-        assert!(matches!(Digest::new(long, 0), Err(CacheError::InvalidDigest(_))));
+        assert!(matches!(
+            Digest::new(long, 0),
+            Err(CacheError::InvalidDigest(_))
+        ));
     }
 
     #[test]
     fn digest_new_rejects_non_hex_chars() {
         let bad = "g".repeat(64);
-        assert!(matches!(Digest::new(bad, 0), Err(CacheError::InvalidDigest(_))));
+        assert!(matches!(
+            Digest::new(bad, 0),
+            Err(CacheError::InvalidDigest(_))
+        ));
     }
 
     #[test]
     fn digest_new_rejects_uppercase_hex() {
         let upper = "A".repeat(64);
-        assert!(matches!(Digest::new(upper, 0), Err(CacheError::InvalidDigest(_))));
+        assert!(matches!(
+            Digest::new(upper, 0),
+            Err(CacheError::InvalidDigest(_))
+        ));
     }
 
     #[test]

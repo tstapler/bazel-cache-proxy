@@ -155,8 +155,7 @@ pub async fn get_v1(
             }
             Ok(r) if r.status().as_u16() == 204 => return Ok(None),
             Ok(r) if r.status().is_server_error() => {
-                last_err =
-                    CacheError::BackendUnavailable(format!("server error {}", r.status()));
+                last_err = CacheError::BackendUnavailable(format!("server error {}", r.status()));
                 continue;
             }
             Ok(r) if !r.status().is_success() => {
@@ -374,10 +373,8 @@ pub async fn put_v1(
                 continue;
             }
             Ok(r) if r.status().is_server_error() => {
-                last_err = CacheError::BackendUnavailable(format!(
-                    "commit server error {}",
-                    r.status()
-                ));
+                last_err =
+                    CacheError::BackendUnavailable(format!("commit server error {}", r.status()));
                 continue;
             }
             Ok(r) if !r.status().is_success() => {

@@ -1,7 +1,7 @@
-use std::sync::Arc;
-use async_trait::async_trait;
-use tokio::io::AsyncRead;
 use crate::{entry_kind::EntryKind, error::CacheError};
+use async_trait::async_trait;
+use std::sync::Arc;
+use tokio::io::AsyncRead;
 
 /// Pluggable async storage backend for cache entries.
 ///

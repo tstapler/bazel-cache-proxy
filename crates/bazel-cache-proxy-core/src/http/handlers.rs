@@ -1,39 +1,29 @@
 use axum::{
     body::Body,
     extract::State,
-    http::{HeaderMap, StatusCode, header},
+    http::{header, HeaderMap, StatusCode},
     response::IntoResponse,
 };
 use futures::TryStreamExt;
 use tokio::io::BufReader;
 use tokio_util::io::ReaderStream;
 
-use crate::{
-    digest::EMPTY_SHA256,
-    error::CacheError,
-};
 use super::{
     extractors::{CacheKey, ContentLength},
     server::AppState,
 };
+use crate::{digest::EMPTY_SHA256, error::CacheError};
 
-pub async fn head_cache(
-    State(state): State<AppState>,
-    key: CacheKey,
-) -> impl IntoResponse {
+pub async fn head_cache(State(state): State<AppState>, key: CacheKey) -> impl IntoResponse {
     // Empty blob short-circuit
     if key.hash == EMPTY_SHA256 {
-        return (
-            StatusCode::OK,
-            [(header::CONTENT_LENGTH, "0")],
-        ).into_response();
+        return (StatusCode::OK, [(header::CONTENT_LENGTH, "0")]).into_response();
     }
 
     match state.backend.contains(key.kind, &key.hash, -1).await {
-        Ok(Some(size)) => (
-            StatusCode::OK,
-            [(header::CONTENT_LENGTH, size.to_string())],
-        ).into_response(),
+        Ok(Some(size)) => {
+            (StatusCode::OK, [(header::CONTENT_LENGTH, size.to_string())]).into_response()
+        }
         Ok(None) => StatusCode::NOT_FOUND.into_response(),
         Err(CacheError::BackendUnavailable(msg)) => {
             (StatusCode::SERVICE_UNAVAILABLE, msg).into_response()
@@ -62,7 +52,8 @@ pub async fn get_cache(
                     StatusCode::OK,
                     [(header::CONTENT_ENCODING, "zstd")],
                     Body::from_stream(stream),
-                ).into_response()
+                )
+                    .into_response()
             } else {
                 let stream = ReaderStream::new(reader);
                 (StatusCode::OK, Body::from_stream(stream)).into_response()
@@ -87,20 +78,24 @@ pub async fn put_cache(
     let stream = body.into_data_stream();
 
     use tokio_util::io::StreamReader;
-    let reader = StreamReader::new(stream.map_err(|e| {
-        std::io::Error::other(e.to_string())
-    }));
+    let reader = StreamReader::new(stream.map_err(|e| std::io::Error::other(e.to_string())));
 
-    match state.backend.put(key.kind, &key.hash, size, Box::new(reader)).await {
+    match state
+        .backend
+        .put(key.kind, &key.hash, size, Box::new(reader))
+        .await
+    {
         Ok(()) => StatusCode::OK.into_response(),
-        Err(CacheError::HashMismatch { expected, actual }) => {
-            (StatusCode::BAD_REQUEST, format!("hash mismatch: expected {expected}, got {actual}"))
-                .into_response()
-        }
-        Err(CacheError::SizeMismatch { expected, actual }) => {
-            (StatusCode::BAD_REQUEST, format!("size mismatch: expected {expected}, got {actual}"))
-                .into_response()
-        }
+        Err(CacheError::HashMismatch { expected, actual }) => (
+            StatusCode::BAD_REQUEST,
+            format!("hash mismatch: expected {expected}, got {actual}"),
+        )
+            .into_response(),
+        Err(CacheError::SizeMismatch { expected, actual }) => (
+            StatusCode::BAD_REQUEST,
+            format!("size mismatch: expected {expected}, got {actual}"),
+        )
+            .into_response(),
         Err(CacheError::BackendUnavailable(msg)) => {
             (StatusCode::SERVICE_UNAVAILABLE, msg).into_response()
         }
@@ -118,27 +113,25 @@ fn accepts_zstd(headers: &HeaderMap) -> bool {
 
 #[cfg(test)]
 mod tests {
+    use super::super::server::build_router;
     use super::*;
-    use std::collections::HashMap;
-    use std::sync::{Arc, Mutex};
+    use crate::{backend::StorageBackend, entry_kind::EntryKind, error::CacheError};
     use async_trait::async_trait;
+    use axum::http::header;
     use axum::{
         body::Body,
-        http::{Request, StatusCode, Method},
+        http::{Method, Request, StatusCode},
     };
-    use axum::http::header;
+    use std::collections::HashMap;
+    use std::sync::{Arc, Mutex};
     use tower::ServiceExt;
-    use crate::{
-        backend::StorageBackend,
-        entry_kind::EntryKind,
-        error::CacheError,
-    };
-    use super::super::server::build_router;
+
+    type Store = Arc<Mutex<HashMap<(EntryKind, String), Vec<u8>>>>;
 
     /// Simple in-memory backend for testing.
     #[derive(Clone, Default)]
     struct InMemoryBackend {
-        store: Arc<Mutex<HashMap<(EntryKind, String), Vec<u8>>>>,
+        store: Store,
     }
 
     #[async_trait]
@@ -178,7 +171,9 @@ mod tests {
         ) -> Result<(), CacheError> {
             use tokio::io::AsyncReadExt;
             let mut buf = Vec::new();
-            data.read_to_end(&mut buf).await.map_err(|e| CacheError::Io(e.to_string()))?;
+            data.read_to_end(&mut buf)
+                .await
+                .map_err(|e| CacheError::Io(e.to_string()))?;
             let mut store = self.store.lock().unwrap();
             store.insert((kind, hash.to_string()), buf);
             Ok(())
@@ -247,7 +242,11 @@ mod tests {
         let resp = app.oneshot(req).await.unwrap();
         assert_eq!(resp.status(), StatusCode::OK);
         assert_eq!(
-            resp.headers().get(header::CONTENT_LENGTH).unwrap().to_str().unwrap(),
+            resp.headers()
+                .get(header::CONTENT_LENGTH)
+                .unwrap()
+                .to_str()
+                .unwrap(),
             "0"
         );
     }
@@ -300,7 +299,9 @@ mod tests {
             .unwrap();
         let get_resp = app.oneshot(get_req).await.unwrap();
         assert_eq!(get_resp.status(), StatusCode::OK);
-        let body = axum::body::to_bytes(get_resp.into_body(), usize::MAX).await.unwrap();
+        let body = axum::body::to_bytes(get_resp.into_body(), usize::MAX)
+            .await
+            .unwrap();
         assert_eq!(&body[..], payload);
     }
 

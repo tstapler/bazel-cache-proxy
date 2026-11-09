@@ -14,10 +14,12 @@ pub mod semver {
     }
 }
 
+#[allow(clippy::result_large_err)] // tonic-generated code
 pub mod reapi {
     tonic::include_proto!("build.bazel.remote.execution.v2");
 }
 
+#[allow(clippy::result_large_err)] // tonic-generated code
 pub mod bytestream {
     tonic::include_proto!("google.bytestream");
 }

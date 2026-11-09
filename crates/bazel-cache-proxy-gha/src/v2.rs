@@ -3,8 +3,8 @@
 use std::time::Duration;
 
 use async_compression::tokio::bufread::{ZstdDecoder, ZstdEncoder};
-use bazel_cache_proxy_core::{entry_kind::EntryKind, error::CacheError};
 use base64::Engine as _;
+use bazel_cache_proxy_core::{entry_kind::EntryKind, error::CacheError};
 use futures::TryStreamExt;
 use serde::{Deserialize, Serialize};
 use tokio::io::{AsyncRead, AsyncReadExt, BufReader};
@@ -116,8 +116,7 @@ where
                 continue;
             }
             Ok(r) if r.status().is_server_error() => {
-                last_err =
-                    CacheError::BackendUnavailable(format!("server error {}", r.status()));
+                last_err = CacheError::BackendUnavailable(format!("server error {}", r.status()));
                 continue;
             }
             Ok(r) if !r.status().is_success() => {
@@ -127,9 +126,10 @@ where
                 )));
             }
             Ok(r) => {
-                let parsed: Resp = r.json().await.map_err(|e| {
-                    CacheError::Internal(format!("failed to parse response: {e}"))
-                })?;
+                let parsed: Resp = r
+                    .json()
+                    .await
+                    .map_err(|e| CacheError::Internal(format!("failed to parse response: {e}")))?;
                 return Ok(parsed);
             }
         }
@@ -276,7 +276,10 @@ pub async fn get_v2(
         twirp_post(client, "GetCacheEntryDownloadURL", &req).await?;
 
     let download_url = match resp {
-        GetCacheEntryDownloadURLResponse { ok: true, signed_download_url: Some(url) } => url,
+        GetCacheEntryDownloadURLResponse {
+            ok: true,
+            signed_download_url: Some(url),
+        } => url,
         _ => return Ok(None),
     };
 
@@ -329,8 +332,14 @@ pub async fn put_v2(
             // Conflict / already cached — treat as success
             return Ok(());
         }
-        CreateCacheEntryResponse { signed_upload_url: Some(url), .. } => url,
-        CreateCacheEntryResponse { signed_upload_url: None, .. } => {
+        CreateCacheEntryResponse {
+            signed_upload_url: Some(url),
+            ..
+        } => url,
+        CreateCacheEntryResponse {
+            signed_upload_url: None,
+            ..
+        } => {
             return Err(CacheError::Internal(
                 "CreateCacheEntry returned ok=true but no signedUploadUrl".into(),
             ));
@@ -384,7 +393,9 @@ mod tests {
     async fn contains_v2_hit() {
         let server = MockServer::start().await;
         Mock::given(method("POST"))
-            .and(path("/twirp/github.actions.results.api.v1.CacheService/GetCacheEntryDownloadURL"))
+            .and(path(
+                "/twirp/github.actions.results.api.v1.CacheService/GetCacheEntryDownloadURL",
+            ))
             .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
                 "ok": true,
                 "signedDownloadUrl": "https://example.blob.core.windows.net/blob",
@@ -394,7 +405,9 @@ mod tests {
             .await;
 
         let client = make_client(server.uri() + "/");
-        let result = contains_v2(&client, EntryKind::CAS, "abc123").await.unwrap();
+        let result = contains_v2(&client, EntryKind::CAS, "abc123")
+            .await
+            .unwrap();
         assert_eq!(result, Some(-1));
     }
 
@@ -402,7 +415,9 @@ mod tests {
     async fn contains_v2_miss() {
         let server = MockServer::start().await;
         Mock::given(method("POST"))
-            .and(path("/twirp/github.actions.results.api.v1.CacheService/GetCacheEntryDownloadURL"))
+            .and(path(
+                "/twirp/github.actions.results.api.v1.CacheService/GetCacheEntryDownloadURL",
+            ))
             .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
                 "ok": false
             })))
@@ -410,7 +425,9 @@ mod tests {
             .await;
 
         let client = make_client(server.uri() + "/");
-        let result = contains_v2(&client, EntryKind::CAS, "abc123").await.unwrap();
+        let result = contains_v2(&client, EntryKind::CAS, "abc123")
+            .await
+            .unwrap();
         assert_eq!(result, None);
     }
 
@@ -418,7 +435,9 @@ mod tests {
     async fn put_v2_conflict_treated_as_success() {
         let server = MockServer::start().await;
         Mock::given(method("POST"))
-            .and(path("/twirp/github.actions.results.api.v1.CacheService/CreateCacheEntry"))
+            .and(path(
+                "/twirp/github.actions.results.api.v1.CacheService/CreateCacheEntry",
+            ))
             .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
                 "ok": false
             })))

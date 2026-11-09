@@ -1,5 +1,5 @@
-use reqwest::Client;
 use bazel_cache_proxy_core::error::CacheError;
+use reqwest::Client;
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum ApiVersion {
@@ -23,14 +23,21 @@ impl GhaClient {
             .map_err(|_| CacheError::Configuration("ACTIONS_RUNTIME_TOKEN not set".into()))?;
         let base_url_v1 = std::env::var("ACTIONS_CACHE_URL").unwrap_or_default();
         let base_url_v2 = std::env::var("ACTIONS_RESULTS_URL").ok();
-        let version_ns = std::env::var("ACTIONS_CACHE_VERSION_NS")
-            .unwrap_or_else(|_| "1".to_string());
+        let version_ns =
+            std::env::var("ACTIONS_CACHE_VERSION_NS").unwrap_or_else(|_| "1".to_string());
         let version = detect_version(&base_url_v2);
         let http = Client::builder()
             .timeout(std::time::Duration::from_secs(30))
             .build()
             .map_err(|e| CacheError::Internal(e.to_string()))?;
-        Ok(Self { http, base_url_v1, base_url_v2, token, version, version_ns })
+        Ok(Self {
+            http,
+            base_url_v1,
+            base_url_v2,
+            token,
+            version,
+            version_ns,
+        })
     }
 
     pub fn auth_header(&self) -> String {

@@ -1,18 +1,15 @@
-use std::path::{Path, PathBuf};
-use std::sync::Arc;
-use std::sync::atomic::{AtomicU64, Ordering};
+use crate::eviction::evict_to_fit;
 use async_trait::async_trait;
-use tokio::io::{AsyncRead, AsyncReadExt, AsyncWriteExt, BufWriter};
-use tokio::sync::Mutex;
-use lru::LruCache;
 use bazel_cache_proxy_core::{
-    backend::StorageBackend,
-    digest::Digest,
-    entry_kind::EntryKind,
-    error::CacheError,
+    backend::StorageBackend, digest::Digest, entry_kind::EntryKind, error::CacheError,
     hashing_writer::HashingWriter,
 };
-use crate::eviction::evict_to_fit;
+use lru::LruCache;
+use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::Arc;
+use tokio::io::{AsyncRead, AsyncReadExt, AsyncWriteExt, BufWriter};
+use tokio::sync::Mutex;
 
 pub struct DiskBackend {
     root: PathBuf,
@@ -51,9 +48,7 @@ impl DiskBackend {
                         let key = format!(
                             "{}/{}",
                             kind,
-                            path.file_name()
-                                .unwrap_or_default()
-                                .to_string_lossy()
+                            path.file_name().unwrap_or_default().to_string_lossy()
                         );
                         lru.put(key, size);
                         total_size += size;
@@ -149,7 +144,14 @@ impl StorageBackend for DiskBackend {
         };
 
         // Evict if needed
-        evict_to_fit(&self.lru, &self.current_size, self.max_size, needed, &self.root).await?;
+        evict_to_fit(
+            &self.lru,
+            &self.current_size,
+            self.max_size,
+            needed,
+            &self.root,
+        )
+        .await?;
 
         let tmp_path = self.tmp_path(kind, hash);
         let final_path = self.entry_path(kind, hash);

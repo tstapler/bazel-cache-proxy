@@ -1,8 +1,10 @@
-use std::sync::Arc;
-use bazel_cache_proxy_core::{backend::StorageBackend, LayeredBackend, NoopBackend};
 use crate::config::BackendConfig;
+use bazel_cache_proxy_core::{backend::StorageBackend, LayeredBackend, NoopBackend};
+use std::sync::Arc;
 
-pub fn build_backend(cfg: &BackendConfig) -> std::pin::Pin<Box<dyn std::future::Future<Output = Arc<dyn StorageBackend>> + Send + '_>> {
+pub fn build_backend(
+    cfg: &BackendConfig,
+) -> std::pin::Pin<Box<dyn std::future::Future<Output = Arc<dyn StorageBackend>> + Send + '_>> {
     Box::pin(async move {
         match cfg {
             BackendConfig::Disk(c) => {
@@ -51,9 +53,10 @@ pub fn build_backend(cfg: &BackendConfig) -> std::pin::Pin<Box<dyn std::future::
             }
             BackendConfig::Sqlite(c) => {
                 use bazel_cache_proxy_sqlite::SqliteBackend;
-                let backend = SqliteBackend::new(c.path.clone(), c.max_size_bytes.map(|b| b.as_u64()))
-                    .await
-                    .expect("failed to create SQLite backend");
+                let backend =
+                    SqliteBackend::new(c.path.clone(), c.max_size_bytes.map(|b| b.as_u64()))
+                        .await
+                        .expect("failed to create SQLite backend");
                 Arc::new(backend) as Arc<dyn StorageBackend>
             }
             BackendConfig::Layered(c) => {

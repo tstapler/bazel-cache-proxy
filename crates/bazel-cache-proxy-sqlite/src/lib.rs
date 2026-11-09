@@ -4,7 +4,7 @@ use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;
 use bytes::Bytes;
-use rusqlite::{Connection, OptionalExtension, params};
+use rusqlite::{params, Connection, OptionalExtension};
 use tokio::io::{AsyncRead, AsyncReadExt};
 
 use bazel_cache_proxy_core::{CacheError, EntryKind, StorageBackend};
@@ -30,7 +30,8 @@ impl SqliteBackend {
     pub async fn new(path: PathBuf, max_size_bytes: Option<u64>) -> Result<Self, SqliteError> {
         let conn = tokio::task::spawn_blocking(move || -> Result<Connection, rusqlite::Error> {
             let conn = Connection::open(&path)?;
-            conn.execute_batch("
+            conn.execute_batch(
+                "
                 PRAGMA journal_mode = WAL;
                 PRAGMA synchronous = NORMAL;
                 PRAGMA foreign_keys = ON;
@@ -43,7 +44,8 @@ impl SqliteBackend {
                     PRIMARY KEY (kind, hash)
                 );
                 CREATE INDEX IF NOT EXISTS blobs_lru ON blobs (inserted_at);
-            ")?;
+            ",
+            )?;
             Ok(conn)
         })
         .await??;
@@ -141,8 +143,8 @@ impl StorageBackend for SqliteBackend {
             return Ok(None);
         };
 
-        let decompressed = zstd::decode_all(Cursor::new(compressed))
-            .map_err(|e| CacheError::Io(e.to_string()))?;
+        let decompressed =
+            zstd::decode_all(Cursor::new(compressed)).map_err(|e| CacheError::Io(e.to_string()))?;
         Ok(Some(Box::new(Cursor::new(Bytes::from(decompressed)))))
     }
 
@@ -210,13 +212,20 @@ mod tests {
 
     async fn make_backend() -> SqliteBackend {
         let f = NamedTempFile::new().unwrap();
-        SqliteBackend::new(f.path().to_path_buf(), None).await.unwrap()
+        SqliteBackend::new(f.path().to_path_buf(), None)
+            .await
+            .unwrap()
     }
 
     #[tokio::test]
     async fn contains_miss_on_empty() {
         let b = make_backend().await;
-        assert_eq!(b.contains(EntryKind::CAS, &"a".repeat(64), 0).await.unwrap(), None);
+        assert_eq!(
+            b.contains(EntryKind::CAS, &"a".repeat(64), 0)
+                .await
+                .unwrap(),
+            None
+        );
     }
 
     #[tokio::test]
@@ -224,13 +233,26 @@ mod tests {
         let b = make_backend().await;
         let data = b"hello sqlite zstd";
         let hash = "a".repeat(64);
-        b.put(EntryKind::CAS, &hash, data.len() as i64, Box::new(Cursor::new(data.to_vec())))
-            .await.unwrap();
+        b.put(
+            EntryKind::CAS,
+            &hash,
+            data.len() as i64,
+            Box::new(Cursor::new(data.to_vec())),
+        )
+        .await
+        .unwrap();
 
-        let size = b.contains(EntryKind::CAS, &hash, data.len() as i64).await.unwrap();
+        let size = b
+            .contains(EntryKind::CAS, &hash, data.len() as i64)
+            .await
+            .unwrap();
         assert_eq!(size, Some(data.len() as i64));
 
-        let mut reader = b.get(EntryKind::CAS, &hash, data.len() as i64).await.unwrap().unwrap();
+        let mut reader = b
+            .get(EntryKind::CAS, &hash, data.len() as i64)
+            .await
+            .unwrap()
+            .unwrap();
         let mut out = Vec::new();
         reader.read_to_end(&mut out).await.unwrap();
         assert_eq!(out, data);
@@ -240,7 +262,14 @@ mod tests {
     async fn ac_and_cas_are_isolated() {
         let b = make_backend().await;
         let hash = "b".repeat(64);
-        b.put(EntryKind::AC, &hash, 4, Box::new(Cursor::new(b"data".to_vec()))).await.unwrap();
+        b.put(
+            EntryKind::AC,
+            &hash,
+            4,
+            Box::new(Cursor::new(b"data".to_vec())),
+        )
+        .await
+        .unwrap();
         assert_eq!(b.contains(EntryKind::CAS, &hash, 4).await.unwrap(), None);
     }
 
@@ -248,7 +277,14 @@ mod tests {
     async fn delete_removes_entry() {
         let b = make_backend().await;
         let hash = "c".repeat(64);
-        b.put(EntryKind::CAS, &hash, 3, Box::new(Cursor::new(b"abc".to_vec()))).await.unwrap();
+        b.put(
+            EntryKind::CAS,
+            &hash,
+            3,
+            Box::new(Cursor::new(b"abc".to_vec())),
+        )
+        .await
+        .unwrap();
         b.delete(EntryKind::CAS, &hash).await.unwrap();
         assert_eq!(b.contains(EntryKind::CAS, &hash, 3).await.unwrap(), None);
     }
@@ -257,11 +293,27 @@ mod tests {
     async fn eviction_removes_oldest_when_over_limit() {
         let f = NamedTempFile::new().unwrap();
         // Limit to 1 byte compressed so every new entry evicts old ones
-        let b = SqliteBackend::new(f.path().to_path_buf(), Some(1)).await.unwrap();
+        let b = SqliteBackend::new(f.path().to_path_buf(), Some(1))
+            .await
+            .unwrap();
         let h1 = "1".repeat(64);
         let h2 = "2".repeat(64);
-        b.put(EntryKind::CAS, &h1, 5, Box::new(Cursor::new(b"first".to_vec()))).await.unwrap();
-        b.put(EntryKind::CAS, &h2, 6, Box::new(Cursor::new(b"second".to_vec()))).await.unwrap();
+        b.put(
+            EntryKind::CAS,
+            &h1,
+            5,
+            Box::new(Cursor::new(b"first".to_vec())),
+        )
+        .await
+        .unwrap();
+        b.put(
+            EntryKind::CAS,
+            &h2,
+            6,
+            Box::new(Cursor::new(b"second".to_vec())),
+        )
+        .await
+        .unwrap();
         // After eviction h1 should be gone (oldest), h2 might also be gone — just check no panic
         let _ = b.contains(EntryKind::CAS, &h1, 5).await.unwrap();
         let _ = b.contains(EntryKind::CAS, &h2, 6).await.unwrap();
