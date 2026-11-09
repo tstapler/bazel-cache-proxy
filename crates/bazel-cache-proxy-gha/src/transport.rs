@@ -56,9 +56,10 @@ struct DownloadReq<'a> {
 struct DownloadResp {
     #[serde(default)]
     ok: bool,
-    #[serde(rename = "signedDownloadUrl", default)]
+    // The service answers with proto field names; accept the camelCase JSON form too.
+    #[serde(rename = "signed_download_url", alias = "signedDownloadUrl", default)]
     signed_download_url: String,
-    #[serde(rename = "matchedKey", default)]
+    #[serde(rename = "matched_key", alias = "matchedKey", default)]
     matched_key: String,
 }
 
@@ -72,7 +73,7 @@ struct CreateReq<'a> {
 struct CreateResp {
     #[serde(default)]
     ok: bool,
-    #[serde(rename = "signedUploadUrl", default)]
+    #[serde(rename = "signed_upload_url", alias = "signedUploadUrl", default)]
     signed_upload_url: String,
     #[serde(default)]
     message: String,
@@ -288,6 +289,33 @@ mod tests {
             .unwrap();
         assert_eq!(got.matched_key, "p-123");
         assert_eq!(got.data, b"payload");
+    }
+
+    #[tokio::test]
+    async fn responses_in_proto_field_names_are_understood() {
+        // Observed from the live service: CreateCacheEntry answers {"ok":true,"signed_upload_url":...}.
+        let s = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path(format!("{SVC}/CreateCacheEntry")))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "ok": true, "signed_upload_url": format!("{}/up", s.uri())
+            })))
+            .mount(&s)
+            .await;
+        Mock::given(method("PUT"))
+            .and(path("/up"))
+            .respond_with(ResponseTemplate::new(201))
+            .mount(&s)
+            .await;
+        Mock::given(method("POST"))
+            .and(path(format!("{SVC}/FinalizeCacheEntryUpload")))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({"ok": true})))
+            .mount(&s)
+            .await;
+        assert_eq!(
+            transport(&s).save("k", vec![1]).await.unwrap(),
+            SaveOutcome::Saved
+        );
     }
 
     #[tokio::test]
