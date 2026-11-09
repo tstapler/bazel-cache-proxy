@@ -5,7 +5,7 @@ use futures::StreamExt;
 use object_store::{
     aws::{AmazonS3, AmazonS3Builder},
     path::Path as ObjPath,
-    Error as ObjectStoreError, ObjectStore,
+    Error as ObjectStoreError, ObjectStoreExt,
 };
 use std::sync::Arc;
 use tokio::io::{AsyncRead, AsyncReadExt};

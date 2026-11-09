@@ -71,7 +71,7 @@ jobs:
           VERSION=${VERSION#v}
           ARCHIVE="bazel-cache-proxy-${VERSION}-${{ matrix.target }}.tar.gz"
           tar -czf "$ARCHIVE" -C target/${{ matrix.target }}/release bazel-cache-proxy
-          echo "ARCHIVE=$ARCHIVE" >> $GITHUB_ENV
+          echo "ARCHIVE=$ARCHIVE" >> "$GITHUB_ENV"
 
       - name: Upload to GitHub Release
         uses: softprops/action-gh-release@3bb12739c298ab8a4eeaf626c5b8d85266b0e65 # v2

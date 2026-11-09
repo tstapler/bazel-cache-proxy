@@ -5,7 +5,7 @@ use futures::StreamExt;
 use object_store::{
     gcp::{GoogleCloudStorage, GoogleCloudStorageBuilder},
     path::Path as ObjPath,
-    Error as ObjectStoreError, ObjectStore, WriteMultipart,
+    Error as ObjectStoreError, ObjectStoreExt, WriteMultipart,
 };
 use std::path::PathBuf;
 use std::sync::Arc;
