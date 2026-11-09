@@ -74,6 +74,8 @@ struct CreateResp {
     ok: bool,
     #[serde(rename = "signedUploadUrl", default)]
     signed_upload_url: String,
+    #[serde(default)]
+    message: String,
 }
 
 #[derive(Serialize)]
@@ -192,6 +194,7 @@ impl CacheTransport for GhaTransport {
         )
         .await?;
         if !created.ok || created.signed_upload_url.is_empty() {
+            tracing::warn!(%key, message = %created.message, ok = created.ok, "CreateCacheEntry declined");
             return Ok(SaveOutcome::AlreadyExists);
         }
         let size = data.len();
