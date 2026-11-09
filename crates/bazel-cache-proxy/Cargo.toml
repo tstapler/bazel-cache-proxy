@@ -11,12 +11,12 @@ name = "bazel-cache-proxy"
 path = "src/main.rs"
 
 [dependencies]
-bazel-cache-proxy-core = { path = "../bazel-cache-proxy-core" }
-bazel-cache-proxy-disk = { path = "../bazel-cache-proxy-disk" }
+bazel-cache-proxy-core = { path = "../bazel-cache-proxy-core", version = "0.1.0" }
+bazel-cache-proxy-disk = { path = "../bazel-cache-proxy-disk", version = "0.1.0" }
 bazel-cache-proxy-s3 = { path = "../bazel-cache-proxy-s3" }
-bazel-cache-proxy-gcs = { path = "../bazel-cache-proxy-gcs" }
-bazel-cache-proxy-gha = { path = "../bazel-cache-proxy-gha" }
-bazel-cache-proxy-sqlite = { path = "../bazel-cache-proxy-sqlite" }
+bazel-cache-proxy-gcs = { path = "../bazel-cache-proxy-gcs", version = "0.1.0" }
+bazel-cache-proxy-gha = { path = "../bazel-cache-proxy-gha", version = "0.1.0" }
+bazel-cache-proxy-sqlite = { path = "../bazel-cache-proxy-sqlite", version = "0.1.0" }
 tokio = { workspace = true }
 axum = { workspace = true }
 tonic = { workspace = true }
