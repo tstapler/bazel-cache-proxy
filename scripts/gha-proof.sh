@@ -22,6 +22,7 @@ TOML
 "$proxy_bin" serve --config "$work/config.toml" >"$work/proxy.log" 2>&1 &
 proxy_pid=$!
 for _ in $(seq 300); do curl -fsS http://127.0.0.1:9090/healthz >/dev/null 2>&1 && break; sleep 0.2; done
+kill -0 "$proxy_pid" 2>/dev/null || { echo "proxy exited at startup (port in use?):" >&2; cat "$work/proxy.log" >&2; exit 1; }
 grep -E "restored|no cache manifest|starting cold|restore failed" "$work/proxy.log" || true
 
 cd "$repo/tests/bazel-smoke"
