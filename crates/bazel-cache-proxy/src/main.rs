@@ -91,7 +91,7 @@ async fn main() {
                 Some(http_ready),
                 Some((metrics_path, metrics_renderer)),
             );
-            let grpc_fut = bazel_cache_proxy_core::grpc::server::serve(backend, grpc_addr);
+            let grpc_fut = bazel_cache_proxy_core::grpc::server::serve(backend.clone(), grpc_addr);
 
             tokio::join!(
                 async {
@@ -105,6 +105,15 @@ async fn main() {
                     }
                 },
             );
+
+            // Servers stop on SIGTERM/Ctrl-C; publish pending writes before exiting.
+            match backend.flush().await {
+                Ok(report) => tracing::info!(?report, "flushed cache on shutdown"),
+                Err(e) => {
+                    tracing::error!("flush on shutdown failed: {e}");
+                    std::process::exit(1);
+                }
+            }
         }
     }
 }

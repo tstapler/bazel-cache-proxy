@@ -1,72 +1,69 @@
 use bazel_cache_proxy_core::error::CacheError;
 use reqwest::Client;
+use sha2::{Digest, Sha256};
 
-#[derive(Debug, Clone, PartialEq)]
-pub enum ApiVersion {
-    V1,
-    V2,
+/// Credentials and endpoint for the GitHub Actions cache service (v2, Twirp).
+///
+/// `ACTIONS_RESULTS_URL` and `ACTIONS_RUNTIME_TOKEN` are only injected into JavaScript/Docker
+/// actions, not into `run:` steps; see the README for how to export them.
+pub struct GhaClient {
+    pub(crate) http: Client,
+    results_url: String,
+    token: String,
+    /// Cache "version" sent with every key; entries with another version never match.
+    pub(crate) version: String,
 }
 
-pub struct GhaClient {
-    pub http: Client,
-    pub base_url_v1: String,
-    pub base_url_v2: Option<String>,
-    pub token: String,
-    pub version: ApiVersion,
-    /// Version namespace string used by the v2 Twirp API.
-    pub version_ns: String,
+// Manual Debug so the runtime token can never leak through `{:?}`.
+impl std::fmt::Debug for GhaClient {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("GhaClient")
+            .field("results_url", &self.results_url)
+            .field("token", &"<redacted>")
+            .finish()
+    }
 }
 
 impl GhaClient {
-    pub fn from_env() -> Result<Self, CacheError> {
-        let token = std::env::var("ACTIONS_RUNTIME_TOKEN")
-            .map_err(|_| CacheError::Configuration("ACTIONS_RUNTIME_TOKEN not set".into()))?;
-        let base_url_v1 = std::env::var("ACTIONS_CACHE_URL").unwrap_or_default();
-        let base_url_v2 = std::env::var("ACTIONS_RESULTS_URL").ok();
-        let version_ns =
-            std::env::var("ACTIONS_CACHE_VERSION_NS").unwrap_or_else(|_| "1".to_string());
-        let version = detect_version(&base_url_v2);
+    pub fn from_env(version_salt: &str) -> Result<Self, CacheError> {
+        let results_url = non_empty_env("ACTIONS_RESULTS_URL")?;
+        let token = non_empty_env("ACTIONS_RUNTIME_TOKEN")?;
+        Self::new(results_url, token, version_salt)
+    }
+
+    pub fn new(results_url: String, token: String, version_salt: &str) -> Result<Self, CacheError> {
         let http = Client::builder()
-            .timeout(std::time::Duration::from_secs(30))
+            .timeout(std::time::Duration::from_secs(120))
             .build()
             .map_err(|e| CacheError::Internal(e.to_string()))?;
+        let version = format!("{:x}", Sha256::digest(version_salt.as_bytes()));
         Ok(Self {
             http,
-            base_url_v1,
-            base_url_v2,
+            results_url,
             token,
             version,
-            version_ns,
         })
     }
 
-    pub fn auth_header(&self) -> String {
+    pub(crate) fn auth_header(&self) -> String {
         format!("Bearer {}", self.token)
     }
 
-    pub fn v1_url(&self, path: &str) -> String {
-        format!("{}{}", self.base_url_v1.trim_end_matches('/'), path)
-    }
-
-    pub fn v2_url(&self, method: &str) -> String {
-        let base = self
-            .base_url_v2
-            .as_deref()
-            .unwrap_or("")
-            .trim_end_matches('/');
-        format!("{base}/twirp/github.actions.results.api.v1.CacheService/{method}")
+    pub(crate) fn twirp_url(&self, method: &str) -> String {
+        format!(
+            "{}/twirp/github.actions.results.api.v1.CacheService/{method}",
+            self.results_url.trim_end_matches('/')
+        )
     }
 }
 
-pub fn detect_version(base_url_v2: &Option<String>) -> ApiVersion {
-    let has_v2_service = std::env::var("ACTIONS_CACHE_SERVICE_V2")
-        .map(|v| v == "true")
-        .unwrap_or(false);
-    let has_v2_url = base_url_v2.as_ref().map(|s| !s.is_empty()).unwrap_or(false);
-    if has_v2_service && has_v2_url {
-        ApiVersion::V2
-    } else {
-        ApiVersion::V1
+fn non_empty_env(name: &str) -> Result<String, CacheError> {
+    match std::env::var(name) {
+        Ok(v) if !v.is_empty() => Ok(v),
+        _ => Err(CacheError::Configuration(format!(
+            "{name} is not set; the GHA cache backend only works inside a GitHub Actions \
+             job that exports the runtime credentials"
+        ))),
     }
 }
 
@@ -75,22 +72,25 @@ mod tests {
     use super::*;
 
     #[test]
-    fn detect_version_v1_by_default() {
-        let version = detect_version(&None);
-        assert_eq!(version, ApiVersion::V1);
+    fn debug_never_prints_token() {
+        let c = GhaClient::new("https://r.example".into(), "s3cret-token".into(), "v1").unwrap();
+        assert!(!format!("{c:?}").contains("s3cret-token"));
     }
 
     #[test]
-    fn detect_version_v1_when_url_absent() {
-        let version = detect_version(&None);
-        assert_eq!(version, ApiVersion::V1);
+    fn twirp_url_trims_trailing_slash() {
+        let c = GhaClient::new("https://r.example/".into(), "t".into(), "v1").unwrap();
+        assert_eq!(
+            c.twirp_url("CreateCacheEntry"),
+            "https://r.example/twirp/github.actions.results.api.v1.CacheService/CreateCacheEntry"
+        );
     }
 
     #[test]
-    fn detect_version_v2_when_both_present() {
-        std::env::set_var("ACTIONS_CACHE_SERVICE_V2", "true");
-        let version = detect_version(&Some("https://results.github.com".into()));
-        std::env::remove_var("ACTIONS_CACHE_SERVICE_V2");
-        assert_eq!(version, ApiVersion::V2);
+    fn version_is_stable_hex_digest() {
+        let a = GhaClient::new("u".into(), "t".into(), "salt").unwrap();
+        let b = GhaClient::new("u".into(), "t".into(), "salt").unwrap();
+        assert_eq!(a.version, b.version);
+        assert_eq!(a.version.len(), 64);
     }
 }

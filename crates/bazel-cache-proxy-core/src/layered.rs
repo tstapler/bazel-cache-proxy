@@ -196,6 +196,11 @@ impl StorageBackend for LayeredBackend {
         r2?;
         Ok(())
     }
+
+    async fn flush(&self) -> Result<crate::backend::FlushReport, CacheError> {
+        self.l1.flush().await?;
+        self.l2.flush().await
+    }
 }
 
 #[cfg(test)]

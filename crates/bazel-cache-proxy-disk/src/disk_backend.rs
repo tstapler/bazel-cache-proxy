@@ -195,8 +195,13 @@ impl StorageBackend for DiskBackend {
         let expected = Digest::new(hash, effective_size)
             .map_err(|e| CacheError::InvalidDigest(e.to_string()))?;
 
-        // Verify hash (and size when logical_size >= 0)
-        match hashing_writer.finalize(&expected) {
+        // Only CAS blobs are content-addressed; an AC key is the action digest, not the
+        // hash of the stored ActionResult.
+        let verified = match kind {
+            EntryKind::CAS => hashing_writer.finalize(&expected),
+            EntryKind::AC => Ok(()),
+        };
+        match verified {
             Ok(()) => {
                 tokio::fs::rename(&tmp_path, &final_path)
                     .await
@@ -426,6 +431,28 @@ mod tests {
         let hash = format!("{:x}", Sha256::digest(b"persisted data"));
         assert!(backend2
             .contains(EntryKind::CAS, &hash, 0)
+            .await
+            .unwrap()
+            .is_some());
+    }
+
+    #[tokio::test]
+    async fn disk_backend_accepts_action_cache_entry_with_unrelated_key() {
+        // AC keys are action digests, not the hash of the stored ActionResult bytes.
+        let (backend, _dir) = make_backend(1024 * 1024).await;
+        let key = "a".repeat(64);
+        let body = b"serialized ActionResult".to_vec();
+        backend
+            .put(
+                EntryKind::AC,
+                &key,
+                body.len() as i64,
+                Box::new(std::io::Cursor::new(body)),
+            )
+            .await
+            .expect("AC put must not require content hash == key");
+        assert!(backend
+            .contains(EntryKind::AC, &key, -1)
             .await
             .unwrap()
             .is_some());

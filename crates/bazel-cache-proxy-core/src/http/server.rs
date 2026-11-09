@@ -53,6 +53,7 @@ pub fn build_router_with_metrics(
         .layer(DefaultBodyLimit::disable());
 
     let mut router = Router::new()
+        .route("/admin/flush", axum::routing::post(handlers::flush))
         .route("/cache/cas/{hash}", head(handlers::head_cache))
         .route("/cache/cas/{hash}", get(handlers::get_cache))
         .route("/cache/ac/{hash}", head(handlers::head_cache))

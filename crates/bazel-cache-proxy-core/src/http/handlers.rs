@@ -20,7 +20,9 @@ pub async fn head_cache(State(state): State<AppState>, key: CacheKey) -> impl In
         return (StatusCode::OK, [(header::CONTENT_LENGTH, "0")]).into_response();
     }
 
-    match state.backend.contains(key.kind, &key.hash, -1).await {
+    let result = state.backend.contains(key.kind, &key.hash, -1).await;
+    record_lookup("head", key.kind, matches!(result, Ok(Some(_))));
+    match result {
         Ok(Some(size)) => {
             (StatusCode::OK, [(header::CONTENT_LENGTH, size.to_string())]).into_response()
         }
@@ -42,7 +44,9 @@ pub async fn get_cache(
         return (StatusCode::OK, Body::empty()).into_response();
     }
 
-    match state.backend.get(key.kind, &key.hash, -1).await {
+    let result = state.backend.get(key.kind, &key.hash, -1).await;
+    record_lookup("get", key.kind, matches!(result, Ok(Some(_))));
+    match result {
         Ok(Some(reader)) => {
             if accepts_zstd(&headers) {
                 use async_compression::tokio::bufread::ZstdEncoder;
@@ -85,7 +89,12 @@ pub async fn put_cache(
         .put(key.kind, &key.hash, size, Box::new(reader))
         .await
     {
-        Ok(()) => StatusCode::OK.into_response(),
+        Ok(()) => {
+            metrics::counter!("bazel_cache_put_total", "kind" => key.kind.to_string()).increment(1);
+            metrics::counter!("bazel_cache_put_bytes_total", "kind" => key.kind.to_string())
+                .increment(size.max(0) as u64);
+            StatusCode::OK.into_response()
+        }
         Err(CacheError::HashMismatch { expected, actual }) => (
             StatusCode::BAD_REQUEST,
             format!("hash mismatch: expected {expected}, got {actual}"),
@@ -99,6 +108,24 @@ pub async fn put_cache(
         Err(CacheError::BackendUnavailable(msg)) => {
             (StatusCode::SERVICE_UNAVAILABLE, msg).into_response()
         }
+        Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
+    }
+}
+
+fn record_lookup(op: &'static str, kind: crate::entry_kind::EntryKind, hit: bool) {
+    metrics::counter!(
+        "bazel_cache_lookups_total",
+        "op" => op,
+        "kind" => kind.to_string(),
+        "result" => if hit { "hit" } else { "miss" }
+    )
+    .increment(1);
+}
+
+/// `POST /admin/flush`: publish pending writes now and report what was uploaded.
+pub async fn flush(State(state): State<AppState>) -> impl IntoResponse {
+    match state.backend.flush().await {
+        Ok(report) => axum::Json(report).into_response(),
         Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
     }
 }
