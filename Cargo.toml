@@ -39,7 +39,7 @@ uuid = { version = "1", features = ["v4"] }
 lru = "0.19"
 dashmap = "6"
 tower = "0.5"
-tower-http = { version = "0.6", features = ["trace"] }
+tower-http = { version = "0.7", features = ["trace"] }
 http = "1"
 http-body-util = "0.1"
 hyper = { version = "1", features = ["full"] }
