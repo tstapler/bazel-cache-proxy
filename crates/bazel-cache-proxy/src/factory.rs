@@ -1,5 +1,5 @@
 use crate::config::BackendConfig;
-use bazel_cache_proxy_core::{backend::StorageBackend, LayeredBackend, NoopBackend};
+use bazel_cache_proxy_core::{backend::StorageBackend, LayeredBackend};
 use std::sync::Arc;
 
 pub fn build_backend(
@@ -37,20 +37,7 @@ pub fn build_backend(
                 let backend = GcsBackend::new(config).expect("failed to create GCS backend");
                 Arc::new(backend) as Arc<dyn StorageBackend>
             }
-            BackendConfig::Gha(_) => {
-                use bazel_cache_proxy_gha::GhaBackend;
-                match GhaBackend::from_env() {
-                    Ok(backend) => Arc::new(backend) as Arc<dyn StorageBackend>,
-                    Err(e) => {
-                        tracing::warn!(
-                            "GHA backend unavailable: {e}; check that ACTIONS_CACHE_URL and \
-                             ACTIONS_RUNTIME_TOKEN env vars are set. Running in no-op mode \
-                             (cache misses only — builds will not be accelerated)."
-                        );
-                        Arc::new(NoopBackend) as Arc<dyn StorageBackend>
-                    }
-                }
-            }
+            BackendConfig::Gha(c) => build_gha(c).await,
             BackendConfig::Sqlite(c) => {
                 use bazel_cache_proxy_sqlite::SqliteBackend;
                 let backend =
@@ -66,4 +53,46 @@ pub fn build_backend(
             }
         }
     })
+}
+
+async fn build_gha(c: &crate::config::GhaConfig) -> Arc<dyn StorageBackend> {
+    use bazel_cache_proxy_disk::DiskBackend;
+    use bazel_cache_proxy_gha::{GhaClient, GhaTransport, PackBackend, PackConfig};
+
+    let root = c.root.clone().unwrap_or_else(|| {
+        std::path::PathBuf::from(std::env::var("RUNNER_TEMP").unwrap_or_else(|_| "/tmp".into()))
+            .join("bazel-cache-proxy")
+    });
+    let upload = c.upload
+        && !std::env::var("BAZEL_CACHE_PROXY_UPLOAD").is_ok_and(|v| {
+            matches!(
+                v.to_ascii_lowercase().as_str(),
+                "false" | "0" | "no" | "off"
+            )
+        });
+    let cfg = PackConfig {
+        prefix: c.prefix.clone(),
+        root: root.clone(),
+        max_local_bytes: c.max_local_bytes.as_u64(),
+        max_pack_bytes: c.max_pack_bytes.as_u64(),
+        max_packs: c.max_packs,
+        upload,
+        run_id: PackConfig::default_run_id(),
+    };
+    match GhaClient::from_env("bazel-cache-proxy/v1") {
+        Ok(client) => {
+            let transport = Arc::new(GhaTransport::new(client));
+            let backend = PackBackend::open(cfg, transport)
+                .await
+                .expect("failed to open GHA pack backend");
+            Arc::new(backend)
+        }
+        Err(e) => {
+            tracing::warn!("{e}; serving a local-only disk cache (nothing will be persisted)");
+            let backend = DiskBackend::new(root, c.max_local_bytes.as_u64())
+                .await
+                .expect("failed to create disk backend");
+            Arc::new(backend)
+        }
+    }
 }

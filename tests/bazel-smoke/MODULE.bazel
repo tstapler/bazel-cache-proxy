@@ -1,0 +1,1 @@
+module(name = "bazel_cache_proxy_smoke", version = "0.0.0")

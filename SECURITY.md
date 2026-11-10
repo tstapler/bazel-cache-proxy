@@ -14,4 +14,7 @@ rather than a public issue. Expect an acknowledgement within a week.
 - Anything a client can write can later be served to every build that reads the same cache.
   Keep untrusted pull requests from writing to the cache scope that trusted builds read
   (see the README on `upload` and GitHub cache scoping).
+- `POST /admin/flush` shares the cache listener and is unauthenticated; it can only trigger an
+  upload of data already in the local cache. AC entries are trusted as written (only CAS content
+  is verified against its hash); packs are only as trustworthy as the cache scope they came from.
 - The GitHub backend never logs the runtime token or signed storage URLs.

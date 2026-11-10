@@ -1,0 +1,10 @@
+# Persist a local disk cache in the GitHub Actions cache (packs + manifest).
+http_addr = "127.0.0.1:9090"
+grpc_addr = "127.0.0.1:9091"
+
+[backend]
+type = "gha"
+prefix = "bazel-linux-x64-ci"   # include OS/arch/workflow so unrelated caches stay apart
+max_local_bytes = "4 GiB"
+max_packs = 24
+upload = true
