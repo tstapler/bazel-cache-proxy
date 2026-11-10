@@ -16,7 +16,7 @@ tonic = { version = "0.12", features = ["transport"] }
 prost = "0.13"
 tonic-build = "0.12"
 prost-build = "0.13"
-object_store = { version = "0.11", features = ["aws", "gcp"] }
+object_store = { version = "0.14", features = ["aws", "gcp"] }
 reqwest = { version = "0.12", features = ["json", "stream"] }
 async-compression = { version = "0.4", features = ["tokio", "zstd"] }
 tokio = { version = "1", features = ["full"] }
@@ -36,7 +36,7 @@ futures = "0.3"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 uuid = { version = "1", features = ["v4"] }
-lru = "0.12"
+lru = "0.19"
 dashmap = "6"
 tower = "0.5"
 tower-http = { version = "0.6", features = ["trace"] }
@@ -48,6 +48,7 @@ tempfile = "3"
 base64 = "0.22"
 serde_json = "1"
 zstd = "0.13"
+tar = "0.4"
 bytesize = { version = "1", features = ["serde"] }
 
 mockall = "0.13"

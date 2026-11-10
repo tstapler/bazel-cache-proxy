@@ -1,8 +1,8 @@
-use tonic::{Request, Response, Status};
 use crate::proto::reapi::{
-    capabilities_server::Capabilities,
-    ActionCacheUpdateCapabilities, CacheCapabilities, GetCapabilitiesRequest, ServerCapabilities,
+    capabilities_server::Capabilities, ActionCacheUpdateCapabilities, CacheCapabilities,
+    GetCapabilitiesRequest, ServerCapabilities,
 };
+use tonic::{Request, Response, Status};
 
 /// SHA256 = 1, matching DigestFunction.Value in the real REAPI proto.
 pub const DIGEST_FUNCTION_SHA256: i32 = 1;
@@ -58,7 +58,9 @@ mod tests {
             .unwrap();
         let caps = resp.into_inner();
         let cache_caps = caps.cache_capabilities.unwrap();
-        assert!(cache_caps.digest_functions.contains(&DIGEST_FUNCTION_SHA256));
+        assert!(cache_caps
+            .digest_functions
+            .contains(&DIGEST_FUNCTION_SHA256));
         assert_eq!(caps.high_api_version.unwrap().major, 2);
     }
 }

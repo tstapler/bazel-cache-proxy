@@ -1,0 +1,16 @@
+# Dependency-free targets so the smoke test needs no toolchain downloads.
+[
+    genrule(
+        name = "gen_%d" % i,
+        outs = ["out_%d.txt" % i],
+        cmd = "sleep 2 && head -c 4096 /dev/zero | tr '\\0' 'x' > $@ && echo %d >> $@" % i,
+    )
+    for i in range(20)
+]
+
+genrule(
+    name = "combined",
+    srcs = [":gen_%d" % i for i in range(20)],
+    outs = ["combined.txt"],
+    cmd = "cat $(SRCS) > $@",
+)

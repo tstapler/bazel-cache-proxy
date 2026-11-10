@@ -15,7 +15,7 @@ pub mod testing;
 // from inside the included file lands here at the crate root).
 pub use proto::semver;
 
-pub use backend::StorageBackend;
+pub use backend::{FlushReport, StorageBackend};
 pub use digest::{Digest, EMPTY_SHA256};
 pub use entry_kind::EntryKind;
 pub use error::CacheError;

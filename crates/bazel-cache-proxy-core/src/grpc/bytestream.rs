@@ -1,5 +1,5 @@
-use std::sync::Arc;
 use std::sync::atomic::{AtomicI64, Ordering};
+use std::sync::Arc;
 use std::sync::Mutex;
 
 use dashmap::DashMap;
@@ -11,6 +11,7 @@ use tokio_stream::wrappers::ReceiverStream;
 use tokio_util::io::StreamReader;
 use tonic::{Request, Response, Status, Streaming};
 
+use super::resource_name::{ReadResourceName, WriteResourceName};
 use crate::{
     backend::StorageBackend,
     digest::EMPTY_SHA256,
@@ -20,7 +21,6 @@ use crate::{
         ReadRequest, ReadResponse, WriteRequest, WriteResponse,
     },
 };
-use super::resource_name::{ReadResourceName, WriteResourceName};
 
 const READ_CHUNK_SIZE: usize = 1024 * 1024; // 1 MiB
 
@@ -76,7 +76,11 @@ impl ByteStream for ByteStreamService {
         let read_limit = req.read_limit;
 
         tokio::spawn(async move {
-            let mut remaining = if read_limit > 0 { read_limit as usize } else { usize::MAX };
+            let mut remaining = if read_limit > 0 {
+                read_limit as usize
+            } else {
+                usize::MAX
+            };
             let mut buf = vec![0u8; READ_CHUNK_SIZE];
             loop {
                 if remaining == 0 {
@@ -87,7 +91,9 @@ impl ByteStream for ByteStreamService {
                     Ok(0) => break,
                     Ok(n) => {
                         remaining = remaining.saturating_sub(n);
-                        let chunk = ReadResponse { data: buf[..n].to_vec() };
+                        let chunk = ReadResponse {
+                            data: buf[..n].to_vec(),
+                        };
                         if tx.send(Ok(chunk)).await.is_err() {
                             break;
                         }
@@ -115,7 +121,9 @@ impl ByteStream for ByteStreamService {
             .await
             .ok_or_else(|| Status::invalid_argument("empty write stream"))??;
         if first.resource_name.is_empty() {
-            return Err(Status::invalid_argument("resource_name missing in first message"));
+            return Err(Status::invalid_argument(
+                "resource_name missing in first message",
+            ));
         }
         let parsed = WriteResourceName::parse(&first.resource_name)
             .map_err(|e| Status::invalid_argument(e.to_string()))?;
@@ -183,7 +191,8 @@ impl ByteStream for ByteStreamService {
             )));
         }
 
-        self.completed_writes.insert(resource_name_for_query, committed_size);
+        self.completed_writes
+            .insert(resource_name_for_query, committed_size);
         Ok(Response::new(WriteResponse { committed_size }))
     }
 

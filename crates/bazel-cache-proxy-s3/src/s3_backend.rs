@@ -1,20 +1,15 @@
-use std::sync::Arc;
 use async_trait::async_trait;
+use bazel_cache_proxy_core::{backend::StorageBackend, entry_kind::EntryKind, error::CacheError};
 use bytes::Bytes;
 use futures::StreamExt;
 use object_store::{
-    ObjectStore,
     aws::{AmazonS3, AmazonS3Builder},
     path::Path as ObjPath,
-    Error as ObjectStoreError,
+    Error as ObjectStoreError, ObjectStoreExt,
 };
+use std::sync::Arc;
 use tokio::io::{AsyncRead, AsyncReadExt};
 use tokio_util::io::StreamReader;
-use bazel_cache_proxy_core::{
-    backend::StorageBackend,
-    entry_kind::EntryKind,
-    error::CacheError,
-};
 
 /// Configuration for the S3 storage backend.
 #[derive(Debug, Clone, serde::Deserialize)]
@@ -73,9 +68,7 @@ impl S3Backend {
             ObjectStoreError::NotFound { .. } => CacheError::NotFound,
             e => {
                 let msg = e.to_string();
-                if msg.contains("Connection")
-                    || msg.contains("timeout")
-                    || msg.contains("network")
+                if msg.contains("Connection") || msg.contains("timeout") || msg.contains("network")
                 {
                     CacheError::BackendUnavailable(msg)
                 } else {
@@ -111,9 +104,9 @@ impl StorageBackend for S3Backend {
         let path = self.object_path(kind, hash);
         match self.store.get(&path).await {
             Ok(result) => {
-                let stream = result.into_stream().map(|r| {
-                    r.map_err(|e| std::io::Error::other(e.to_string()))
-                });
+                let stream = result
+                    .into_stream()
+                    .map(|r| r.map_err(|e| std::io::Error::other(e.to_string())));
                 let reader = StreamReader::new(stream);
                 Ok(Some(Box::new(reader)))
             }

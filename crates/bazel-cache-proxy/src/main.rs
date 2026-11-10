@@ -6,7 +6,11 @@ mod config;
 mod factory;
 
 #[derive(Parser)]
-#[command(name = "bazel-cache-proxy", version, about = "Bazel remote cache proxy")]
+#[command(
+    name = "bazel-cache-proxy",
+    version,
+    about = "Bazel remote cache proxy"
+)]
 struct Cli {
     #[command(subcommand)]
     command: Commands,
@@ -31,23 +35,26 @@ enum Commands {
 
 #[tokio::main]
 async fn main() {
-    tracing_subscriber::fmt::init();
+    tracing_subscriber::fmt()
+        .with_env_filter(
+            tracing_subscriber::EnvFilter::try_from_default_env()
+                .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info")),
+        )
+        .init();
 
     let cli = Cli::parse();
 
     match cli.command {
-        Commands::ValidateConfig { config } => {
-            match config::Config::from_file(&config) {
-                Ok(_cfg) => {
-                    println!("Config OK");
-                    std::process::exit(0);
-                }
-                Err(e) => {
-                    eprintln!("Config error: {e}");
-                    std::process::exit(1);
-                }
+        Commands::ValidateConfig { config } => match config::Config::from_file(&config) {
+            Ok(_cfg) => {
+                println!("Config OK");
+                std::process::exit(0);
             }
-        }
+            Err(e) => {
+                eprintln!("Config error: {e}");
+                std::process::exit(1);
+            }
+        },
         Commands::Serve { config } => {
             let cfg = config::Config::from_file(&config).unwrap_or_else(|e| {
                 eprintln!("Failed to load config: {e}");
@@ -89,15 +96,29 @@ async fn main() {
                 Some(http_ready),
                 Some((metrics_path, metrics_renderer)),
             );
-            let grpc_fut = bazel_cache_proxy_core::grpc::server::serve(
-                backend,
-                grpc_addr,
-            );
+            let grpc_fut = bazel_cache_proxy_core::grpc::server::serve(backend.clone(), grpc_addr);
 
             tokio::join!(
-                async { if let Err(e) = http_fut.await { tracing::error!("HTTP server error: {e}"); } },
-                async { if let Err(e) = grpc_fut.await { tracing::error!("gRPC server error: {e}"); } },
+                async {
+                    if let Err(e) = http_fut.await {
+                        tracing::error!("HTTP server error: {e}");
+                    }
+                },
+                async {
+                    if let Err(e) = grpc_fut.await {
+                        tracing::error!("gRPC server error: {e}");
+                    }
+                },
             );
+
+            // Servers stop on SIGTERM/Ctrl-C; publish pending writes before exiting.
+            match backend.flush().await {
+                Ok(report) => tracing::info!(?report, "flushed cache on shutdown"),
+                Err(e) => {
+                    tracing::error!("flush on shutdown failed: {e}");
+                    std::process::exit(1);
+                }
+            }
         }
     }
 }

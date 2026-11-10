@@ -1,7 +1,3 @@
-use std::sync::Arc;
-use prost::Message;
-use tokio::io::AsyncReadExt;
-use tonic::{Request, Response, Status};
 use crate::{
     backend::StorageBackend,
     entry_kind::EntryKind,
@@ -11,6 +7,10 @@ use crate::{
         UpdateActionResultRequest,
     },
 };
+use prost::Message;
+use std::sync::Arc;
+use tokio::io::AsyncReadExt;
+use tonic::{Request, Response, Status};
 
 pub struct ActionCacheService {
     backend: Arc<dyn StorageBackend>,
@@ -33,7 +33,11 @@ impl ActionCache for ActionCacheService {
             .action_digest
             .ok_or_else(|| Status::invalid_argument("missing action_digest"))?;
 
-        match self.backend.get(EntryKind::AC, &digest.hash, digest.size_bytes).await {
+        match self
+            .backend
+            .get(EntryKind::AC, &digest.hash, digest.size_bytes)
+            .await
+        {
             Ok(Some(mut reader)) => {
                 let mut buf = Vec::new();
                 reader
@@ -62,7 +66,9 @@ impl ActionCache for ActionCacheService {
             .ok_or_else(|| Status::invalid_argument("missing action_result"))?;
 
         let mut buf = Vec::new();
-        result.encode(&mut buf).map_err(|e| Status::internal(e.to_string()))?;
+        result
+            .encode(&mut buf)
+            .map_err(|e| Status::internal(e.to_string()))?;
         let size = buf.len() as i64;
         let reader = std::io::Cursor::new(buf);
 
@@ -102,15 +108,18 @@ pub fn cache_error_to_status(e: CacheError) -> Status {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::Arc;
-    use tonic::Code;
     use crate::{
         proto::reapi::{ActionResult, Digest},
         testing::InMemoryBackend,
     };
+    use std::sync::Arc;
+    use tonic::Code;
 
     fn make_digest(hash: &str, size: i64) -> Digest {
-        Digest { hash: hash.to_string(), size_bytes: size }
+        Digest {
+            hash: hash.to_string(),
+            size_bytes: size,
+        }
     }
 
     #[tokio::test]
@@ -119,7 +128,10 @@ mod tests {
         let svc = ActionCacheService::new(backend);
 
         let action_digest = make_digest(&"a".repeat(64), 0);
-        let result_in = ActionResult { exit_code: 42, ..Default::default() };
+        let result_in = ActionResult {
+            exit_code: 42,
+            ..Default::default()
+        };
 
         let update_resp = svc
             .update_action_result(Request::new(UpdateActionResultRequest {

@@ -48,7 +48,11 @@ impl ReadResourceName {
             String::new()
         };
 
-        Ok(Self { instance_name, hash, size })
+        Ok(Self {
+            instance_name,
+            hash,
+            size,
+        })
     }
 }
 
@@ -82,7 +86,12 @@ impl WriteResourceName {
             String::new()
         };
 
-        Ok(Self { instance_name, upload_id, hash, size })
+        Ok(Self {
+            instance_name,
+            upload_id,
+            hash,
+            size,
+        })
     }
 }
 

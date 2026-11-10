@@ -1,7 +1,20 @@
-use std::sync::Arc;
-use async_trait::async_trait;
-use tokio::io::AsyncRead;
 use crate::{entry_kind::EntryKind, error::CacheError};
+use async_trait::async_trait;
+use std::sync::Arc;
+use tokio::io::AsyncRead;
+
+/// Outcome of [`StorageBackend::flush`].
+#[derive(Debug, Default, Clone, PartialEq, Eq, serde::Serialize)]
+pub struct FlushReport {
+    pub packs_uploaded: u64,
+    pub blobs_uploaded: u64,
+    pub bytes_uploaded: u64,
+    /// The whole cache was rewritten instead of appending new packs.
+    pub compacted: bool,
+    pub manifest_key: Option<String>,
+    /// Why nothing was published (nothing new, uploads disabled).
+    pub skipped_reason: Option<String>,
+}
 
 /// Pluggable async storage backend for cache entries.
 ///
@@ -45,6 +58,11 @@ pub trait StorageBackend: Send + Sync + 'static {
 
     /// Removes the entry. Returns `Ok(())` if the entry did not exist.
     async fn delete(&self, kind: EntryKind, hash: &str) -> Result<(), CacheError>;
+
+    /// Publishes pending writes to durable storage. A no-op for backends that write through.
+    async fn flush(&self) -> Result<FlushReport, CacheError> {
+        Ok(FlushReport::default())
+    }
 }
 
 /// Blanket impl so `Arc<T>` can be used wherever `T: StorageBackend`.
@@ -80,5 +98,9 @@ impl<T: StorageBackend> StorageBackend for Arc<T> {
 
     async fn delete(&self, kind: EntryKind, hash: &str) -> Result<(), CacheError> {
         (**self).delete(kind, hash).await
+    }
+
+    async fn flush(&self) -> Result<FlushReport, CacheError> {
+        (**self).flush().await
     }
 }

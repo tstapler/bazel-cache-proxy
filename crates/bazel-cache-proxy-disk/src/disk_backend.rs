@@ -1,18 +1,15 @@
-use std::path::{Path, PathBuf};
-use std::sync::Arc;
-use std::sync::atomic::{AtomicU64, Ordering};
+use crate::eviction::evict_to_fit;
 use async_trait::async_trait;
-use tokio::io::{AsyncRead, AsyncReadExt, AsyncWriteExt, BufWriter};
-use tokio::sync::Mutex;
-use lru::LruCache;
 use bazel_cache_proxy_core::{
-    backend::StorageBackend,
-    digest::Digest,
-    entry_kind::EntryKind,
-    error::CacheError,
+    backend::StorageBackend, digest::Digest, entry_kind::EntryKind, error::CacheError,
     hashing_writer::HashingWriter,
 };
-use crate::eviction::evict_to_fit;
+use lru::LruCache;
+use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::Arc;
+use tokio::io::{AsyncRead, AsyncReadExt, AsyncWriteExt, BufWriter};
+use tokio::sync::Mutex;
 
 pub struct DiskBackend {
     root: PathBuf,
@@ -51,9 +48,7 @@ impl DiskBackend {
                         let key = format!(
                             "{}/{}",
                             kind,
-                            path.file_name()
-                                .unwrap_or_default()
-                                .to_string_lossy()
+                            path.file_name().unwrap_or_default().to_string_lossy()
                         );
                         lru.put(key, size);
                         total_size += size;
@@ -149,7 +144,14 @@ impl StorageBackend for DiskBackend {
         };
 
         // Evict if needed
-        evict_to_fit(&self.lru, &self.current_size, self.max_size, needed, &self.root).await?;
+        evict_to_fit(
+            &self.lru,
+            &self.current_size,
+            self.max_size,
+            needed,
+            &self.root,
+        )
+        .await?;
 
         let tmp_path = self.tmp_path(kind, hash);
         let final_path = self.entry_path(kind, hash);
@@ -193,8 +195,17 @@ impl StorageBackend for DiskBackend {
         let expected = Digest::new(hash, effective_size)
             .map_err(|e| CacheError::InvalidDigest(e.to_string()))?;
 
-        // Verify hash (and size when logical_size >= 0)
-        match hashing_writer.finalize(&expected) {
+        // Only CAS blobs are content-addressed; an AC key is the action digest, not the
+        // hash of the stored ActionResult.
+        let verified = match kind {
+            EntryKind::CAS => hashing_writer.finalize(&expected),
+            EntryKind::AC if actual_written != effective_size => Err(CacheError::SizeMismatch {
+                expected: effective_size,
+                actual: actual_written,
+            }),
+            EntryKind::AC => Ok(()),
+        };
+        match verified {
             Ok(()) => {
                 tokio::fs::rename(&tmp_path, &final_path)
                     .await
@@ -427,5 +438,42 @@ mod tests {
             .await
             .unwrap()
             .is_some());
+    }
+
+    #[tokio::test]
+    async fn disk_backend_accepts_action_cache_entry_with_unrelated_key() {
+        // AC keys are action digests, not the hash of the stored ActionResult bytes.
+        let (backend, _dir) = make_backend(1024 * 1024).await;
+        let key = "a".repeat(64);
+        let body = b"serialized ActionResult".to_vec();
+        backend
+            .put(
+                EntryKind::AC,
+                &key,
+                body.len() as i64,
+                Box::new(std::io::Cursor::new(body)),
+            )
+            .await
+            .expect("AC put must not require content hash == key");
+        assert!(backend
+            .contains(EntryKind::AC, &key, -1)
+            .await
+            .unwrap()
+            .is_some());
+    }
+
+    #[tokio::test]
+    async fn disk_backend_rejects_action_cache_entry_with_wrong_declared_size() {
+        let (backend, _dir) = make_backend(1024 * 1024).await;
+        let err = backend
+            .put(
+                EntryKind::AC,
+                &"b".repeat(64),
+                999,
+                Box::new(std::io::Cursor::new(b"short".to_vec())),
+            )
+            .await
+            .unwrap_err();
+        assert!(matches!(err, CacheError::SizeMismatch { .. }));
     }
 }

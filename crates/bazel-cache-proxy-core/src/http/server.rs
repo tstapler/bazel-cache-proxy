@@ -1,14 +1,14 @@
-use std::net::SocketAddr;
-use std::sync::Arc;
-use axum::{
-    Router,
-    extract::DefaultBodyLimit,
-    routing::{get, head, put},
-};
-use tokio::net::TcpListener;
-use crate::backend::StorageBackend;
 use super::handlers;
 use super::health;
+use crate::backend::StorageBackend;
+use axum::{
+    extract::DefaultBodyLimit,
+    routing::{get, head, put},
+    Router,
+};
+use std::net::SocketAddr;
+use std::sync::Arc;
+use tokio::net::TcpListener;
 
 pub async fn serve(
     backend: Arc<dyn StorageBackend>,
@@ -53,6 +53,7 @@ pub fn build_router_with_metrics(
         .layer(DefaultBodyLimit::disable());
 
     let mut router = Router::new()
+        .route("/admin/flush", axum::routing::post(handlers::flush))
         .route("/cache/cas/{hash}", head(handlers::head_cache))
         .route("/cache/cas/{hash}", get(handlers::get_cache))
         .route("/cache/ac/{hash}", head(handlers::head_cache))
@@ -87,7 +88,9 @@ pub struct AppState {
 async fn shutdown_signal() {
     use tokio::signal;
     let ctrl_c = async {
-        signal::ctrl_c().await.expect("failed to install Ctrl+C handler");
+        signal::ctrl_c()
+            .await
+            .expect("failed to install Ctrl+C handler");
     };
     #[cfg(unix)]
     let terminate = async {

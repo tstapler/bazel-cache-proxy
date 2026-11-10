@@ -1,0 +1,62 @@
+name: GHA cache proof
+
+# Builds a small Bazel target twice on fresh runners (cold, then warm) with the proxy persisting
+# its cache in the GitHub Actions cache between them. The key prefix is unique per run so the
+# cold phase is genuinely cold.
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - 'crates/**'
+      - 'tests/bazel-smoke/**'
+      - 'scripts/gha-proof.sh'
+      - '.github/workflows/gha-cache-proof.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: gha-cache-proof-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    # Fork PRs get a read-only cache token, so the proof cannot publish; skip them.
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with: { persist-credentials: false }
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
+      - run: cargo build --release -p bazel-cache-proxy
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: proxy
+          path: target/release/bazel-cache-proxy
+          if-no-files-found: error
+
+  proof:
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      max-parallel: 1 # cold must finish before warm starts
+      matrix:
+        phase: [cold, warm]
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with: { persist-credentials: false }
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: proxy
+          path: bin
+      - run: chmod +x bin/bazel-cache-proxy
+      # run: steps do not receive the cache credentials; this action exports them.
+      - uses: crazy-max/ghaction-github-runtime@3cb05d89e1f492524af3d41a1c98c83bc3025124 # v3
+      - name: Build with the proxy (${{ matrix.phase }})
+        env:
+          PHASE: ${{ matrix.phase }}
+          PREFIX: proof-${{ github.run_id }}-${{ github.run_attempt }}
+        run: scripts/gha-proof.sh "$PHASE" bin/bazel-cache-proxy "$PREFIX"

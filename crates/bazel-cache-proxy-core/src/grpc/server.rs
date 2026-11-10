@@ -1,21 +1,20 @@
-use std::net::SocketAddr;
-use std::sync::Arc;
-use tonic::transport::Server;
+use super::{
+    action_cache::ActionCacheService, bytestream::ByteStreamService,
+    capabilities::CapabilitiesService, cas::CasService,
+};
 use crate::{
     backend::StorageBackend,
     proto::{
         bytestream::byte_stream_server::ByteStreamServer,
         reapi::{
-            action_cache_server::ActionCacheServer,
-            capabilities_server::CapabilitiesServer,
+            action_cache_server::ActionCacheServer, capabilities_server::CapabilitiesServer,
             content_addressable_storage_server::ContentAddressableStorageServer,
         },
     },
 };
-use super::{
-    action_cache::ActionCacheService, bytestream::ByteStreamService,
-    capabilities::CapabilitiesService, cas::CasService,
-};
+use std::net::SocketAddr;
+use std::sync::Arc;
+use tonic::transport::Server;
 
 pub async fn serve(
     backend: Arc<dyn StorageBackend>,
@@ -24,8 +23,12 @@ pub async fn serve(
     tracing::info!("gRPC server listening on {addr}");
     Server::builder()
         .add_service(CapabilitiesServer::new(CapabilitiesService))
-        .add_service(ActionCacheServer::new(ActionCacheService::new(backend.clone())))
-        .add_service(ContentAddressableStorageServer::new(CasService::new(backend.clone())))
+        .add_service(ActionCacheServer::new(ActionCacheService::new(
+            backend.clone(),
+        )))
+        .add_service(ContentAddressableStorageServer::new(CasService::new(
+            backend.clone(),
+        )))
         .add_service(ByteStreamServer::new(ByteStreamService::new(backend)))
         .serve_with_shutdown(addr, shutdown_signal())
         .await?;
@@ -35,7 +38,9 @@ pub async fn serve(
 async fn shutdown_signal() {
     use tokio::signal;
     let ctrl_c = async {
-        signal::ctrl_c().await.expect("failed to install Ctrl+C handler");
+        signal::ctrl_c()
+            .await
+            .expect("failed to install Ctrl+C handler");
     };
     #[cfg(unix)]
     let terminate = async {

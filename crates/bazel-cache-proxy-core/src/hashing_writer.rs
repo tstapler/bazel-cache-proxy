@@ -1,9 +1,9 @@
+use crate::{digest::Digest, error::CacheError};
+use sha2::{Digest as Sha2Digest, Sha256};
 use std::io;
 use std::pin::Pin;
 use std::task::{Context, Poll};
-use sha2::{Digest as Sha2Digest, Sha256};
 use tokio::io::AsyncWrite;
-use crate::{digest::Digest, error::CacheError};
 
 /// Wraps an `AsyncWrite` and computes the SHA-256 hash of all bytes written.
 /// After all bytes are written, call `finalize(expected)` to verify the digest.
@@ -139,7 +139,10 @@ mod tests {
         let mut w = HashingWriter::new(&mut buf);
         w.write_all(input).await.unwrap();
         let wrong_digest = Digest::new(wrong_hash, input.len() as i64).unwrap();
-        assert!(matches!(w.finalize(&wrong_digest), Err(CacheError::HashMismatch { .. })));
+        assert!(matches!(
+            w.finalize(&wrong_digest),
+            Err(CacheError::HashMismatch { .. })
+        ));
     }
 
     #[tokio::test]

@@ -1,8 +1,8 @@
+use bazel_cache_proxy_core::error::CacheError;
+use lru::LruCache;
 use std::path::Path;
 use std::sync::atomic::{AtomicU64, Ordering};
 use tokio::sync::Mutex;
-use lru::LruCache;
-use bazel_cache_proxy_core::error::CacheError;
 
 /// Evict LRU entries until `current_size + needed <= max_size`.
 /// Ignores NotFound errors (already evicted by another thread).

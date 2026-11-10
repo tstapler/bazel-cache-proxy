@@ -1,14 +1,14 @@
-use std::path::PathBuf;
 use bytesize::ByteSize;
 use serde::Deserialize;
+use std::path::PathBuf;
 
 #[derive(Debug, Deserialize)]
 pub struct Config {
-    /// HTTP listen address (default: "0.0.0.0:9090")
+    /// HTTP listen address (default: "127.0.0.1:9090", loopback only)
     #[serde(default = "default_http_addr")]
     pub http_addr: String,
 
-    /// gRPC listen address (default: "0.0.0.0:9091")
+    /// gRPC listen address (default: "127.0.0.1:9091", loopback only)
     #[serde(default = "default_grpc_addr")]
     pub grpc_addr: String,
 
@@ -19,9 +19,15 @@ pub struct Config {
     pub backend: BackendConfig,
 }
 
-fn default_http_addr() -> String { "0.0.0.0:9090".to_string() }
-fn default_grpc_addr() -> String { "0.0.0.0:9091".to_string() }
-fn default_metrics_path() -> String { "/metrics".to_string() }
+fn default_http_addr() -> String {
+    "127.0.0.1:9090".to_string()
+}
+fn default_grpc_addr() -> String {
+    "127.0.0.1:9091".to_string()
+}
+fn default_metrics_path() -> String {
+    "/metrics".to_string()
+}
 
 #[derive(Debug, Deserialize)]
 #[serde(tag = "type", rename_all = "lowercase")]
@@ -41,7 +47,9 @@ pub struct DiskConfig {
     pub max_size_bytes: ByteSize,
 }
 
-fn default_max_size() -> ByteSize { ByteSize::gib(10) }
+fn default_max_size() -> ByteSize {
+    ByteSize::gib(10)
+}
 
 #[derive(Debug, Deserialize, Clone)]
 pub struct S3Config {
@@ -60,9 +68,42 @@ pub struct GcsConfig {
     pub credentials_path: Option<PathBuf>,
 }
 
+/// Disk cache persisted to the GitHub Actions cache. Credentials come from the
+/// `ACTIONS_RESULTS_URL` / `ACTIONS_RUNTIME_TOKEN` environment variables.
 #[derive(Debug, Deserialize)]
 pub struct GhaConfig {
-    // GHA backend reads all config from env vars
+    /// Cache key prefix; include OS/arch/workflow so unrelated caches stay apart.
+    #[serde(default = "default_gha_prefix")]
+    pub prefix: String,
+    /// Local working cache directory (default: `$RUNNER_TEMP/bazel-cache-proxy`).
+    pub root: Option<PathBuf>,
+    #[serde(default = "default_gha_local_max")]
+    pub max_local_bytes: ByteSize,
+    /// Uncompressed bytes per pack.
+    #[serde(default = "default_gha_pack_size")]
+    pub max_pack_bytes: ByteSize,
+    /// Rewrite the whole cache once the manifest would list more packs than this.
+    #[serde(default = "default_gha_max_packs")]
+    pub max_packs: usize,
+    /// Publish new blobs on flush. `BAZEL_CACHE_PROXY_UPLOAD=false` overrides to false.
+    #[serde(default = "default_true")]
+    pub upload: bool,
+}
+
+fn default_gha_prefix() -> String {
+    "bazel".to_string()
+}
+fn default_gha_local_max() -> ByteSize {
+    ByteSize::gib(4)
+}
+fn default_gha_pack_size() -> ByteSize {
+    ByteSize::mib(200)
+}
+fn default_gha_max_packs() -> usize {
+    24
+}
+fn default_true() -> bool {
+    true
 }
 
 #[derive(Debug, Deserialize)]
@@ -83,7 +124,10 @@ pub struct LayeredConfig {
 
 impl Config {
     pub fn from_file(path: &std::path::Path) -> Result<Self, Box<dyn std::error::Error>> {
-        use figment::{Figment, providers::{Toml, Env, Format}};
+        use figment::{
+            providers::{Env, Format, Toml},
+            Figment,
+        };
         let config: Config = Figment::new()
             .merge(Toml::file(path))
             .merge(Env::prefixed("BAZEL_CACHE_"))
@@ -213,8 +257,8 @@ region = "us-east-1"
 type = "gha"
 "#;
         let config: Config = toml::from_str(toml).unwrap();
-        assert_eq!(config.http_addr, "0.0.0.0:9090");
-        assert_eq!(config.grpc_addr, "0.0.0.0:9091");
+        assert_eq!(config.http_addr, "127.0.0.1:9090");
+        assert_eq!(config.grpc_addr, "127.0.0.1:9091");
     }
 
     #[test]
@@ -232,7 +276,7 @@ type = "gha"
     #[test]
     fn config_missing_backend_returns_error() {
         let toml = r#"
-http_addr = "0.0.0.0:9090"
+http_addr = "127.0.0.1:9090"
 "#;
         let result: Result<Config, _> = toml::from_str(toml);
         assert!(result.is_err());

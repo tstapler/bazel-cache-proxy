@@ -1,9 +1,9 @@
+use crate::{digest::Digest, entry_kind::EntryKind};
 use axum::{
     extract::FromRequestParts,
     http::{request::Parts, StatusCode},
     response::{IntoResponse, Response},
 };
-use crate::{digest::Digest, entry_kind::EntryKind};
 
 /// Extracted cache key from the URL path segment.
 /// URL pattern: /cache/{kind}/{hash}
@@ -35,9 +35,9 @@ impl<S: Send + Sync> FromRequestParts<S> for CacheKey {
         let kind_str = segments[1];
         let hash = segments[2].to_string();
 
-        let kind = kind_str.parse::<EntryKind>().map_err(|_| {
-            CacheKeyRejection(format!("unknown entry kind: {kind_str:?}"))
-        })?;
+        let kind = kind_str
+            .parse::<EntryKind>()
+            .map_err(|_| CacheKeyRejection(format!("unknown entry kind: {kind_str:?}")))?;
 
         // Validate hash length and hex characters (size 0 is used for validation only)
         Digest::new(&hash, 0).map_err(|e| CacheKeyRejection(format!("{e}")))?;

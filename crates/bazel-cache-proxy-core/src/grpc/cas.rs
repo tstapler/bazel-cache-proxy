@@ -1,21 +1,20 @@
-use std::sync::Arc;
-use futures::StreamExt;
-use sha2::{Digest as Sha2Digest, Sha256};
-use tokio::io::AsyncReadExt;
-use tonic::{Request, Response, Status};
+use super::action_cache::cache_error_to_status;
 use crate::{
     backend::StorageBackend,
     digest::EMPTY_SHA256,
     entry_kind::EntryKind,
     proto::reapi::{
         batch_read_blobs_response, batch_update_blobs_response,
-        content_addressable_storage_server::ContentAddressableStorage,
-        BatchReadBlobsRequest, BatchReadBlobsResponse, BatchUpdateBlobsRequest,
-        BatchUpdateBlobsResponse, FindMissingBlobsRequest, FindMissingBlobsResponse,
-        GetTreeRequest, GetTreeResponse,
+        content_addressable_storage_server::ContentAddressableStorage, BatchReadBlobsRequest,
+        BatchReadBlobsResponse, BatchUpdateBlobsRequest, BatchUpdateBlobsResponse,
+        FindMissingBlobsRequest, FindMissingBlobsResponse, GetTreeRequest, GetTreeResponse,
     },
 };
-use super::action_cache::cache_error_to_status;
+use futures::StreamExt;
+use sha2::{Digest as Sha2Digest, Sha256};
+use std::sync::Arc;
+use tokio::io::AsyncReadExt;
+use tonic::{Request, Response, Status};
 
 pub const BATCH_READ_CONCURRENCY: usize = 32;
 
@@ -47,13 +46,19 @@ impl ContentAddressableStorage for CasService {
             if d.hash == EMPTY_SHA256 && d.size_bytes == 0 {
                 continue;
             }
-            match self.backend.contains(EntryKind::CAS, &d.hash, d.size_bytes).await {
+            match self
+                .backend
+                .contains(EntryKind::CAS, &d.hash, d.size_bytes)
+                .await
+            {
                 Ok(None) => missing.push(d),
                 Ok(Some(_)) => {}
                 Err(e) => return Err(cache_error_to_status(e)),
             }
         }
-        Ok(Response::new(FindMissingBlobsResponse { missing_blob_digests: missing }))
+        Ok(Response::new(FindMissingBlobsResponse {
+            missing_blob_digests: missing,
+        }))
     }
 
     async fn batch_read_blobs(
@@ -155,15 +160,17 @@ impl ContentAddressableStorage for CasService {
                 responses.push(batch_update_blobs_response::Response {
                     digest: Some(proto_digest),
                     status_code: INVALID_ARGUMENT,
-                    status_message: format!(
-                        "size mismatch: expected {expected_size}, got {size}",
-                    ),
+                    status_message: format!("size mismatch: expected {expected_size}, got {size}",),
                 });
                 continue;
             }
 
             let reader = std::io::Cursor::new(data);
-            match self.backend.put(EntryKind::CAS, &proto_digest.hash, size, Box::new(reader)).await {
+            match self
+                .backend
+                .put(EntryKind::CAS, &proto_digest.hash, size, Box::new(reader))
+                .await
+            {
                 Ok(()) => responses.push(batch_update_blobs_response::Response {
                     digest: Some(proto_digest),
                     status_code: OK,
@@ -193,19 +200,21 @@ impl ContentAddressableStorage for CasService {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::Arc;
-    use sha2::{Digest as Sha2Digest, Sha256};
     use crate::{
         digest::EMPTY_SHA256,
         proto::reapi::{
-            batch_update_blobs_request, Digest, FindMissingBlobsRequest,
-            BatchUpdateBlobsRequest,
+            batch_update_blobs_request, BatchUpdateBlobsRequest, Digest, FindMissingBlobsRequest,
         },
         testing::InMemoryBackend,
     };
+    use sha2::{Digest as Sha2Digest, Sha256};
+    use std::sync::Arc;
 
     fn make_digest(hash: &str, size: i64) -> Digest {
-        Digest { hash: hash.to_string(), size_bytes: size }
+        Digest {
+            hash: hash.to_string(),
+            size_bytes: size,
+        }
     }
 
     fn hash_bytes(data: &[u8]) -> String {
@@ -226,7 +235,7 @@ mod tests {
             instance_name: String::new(),
             requests: vec![batch_update_blobs_request::Request {
                 digest: Some(make_digest(&hash, size)),
-                data: data.to_vec().into(),
+                data: data.to_vec(),
             }],
         }))
         .await
@@ -236,10 +245,7 @@ mod tests {
         let resp = svc
             .find_missing_blobs(Request::new(FindMissingBlobsRequest {
                 instance_name: String::new(),
-                blob_digests: vec![
-                    make_digest(&hash, size),
-                    make_digest(&absent_hash, 0),
-                ],
+                blob_digests: vec![make_digest(&hash, size), make_digest(&absent_hash, 0)],
             }))
             .await
             .unwrap();
@@ -279,7 +285,7 @@ mod tests {
                 instance_name: String::new(),
                 requests: vec![batch_update_blobs_request::Request {
                     digest: Some(make_digest(&wrong_hash, data.len() as i64)),
-                    data: data.to_vec().into(),
+                    data: data.to_vec(),
                 }],
             }))
             .await
