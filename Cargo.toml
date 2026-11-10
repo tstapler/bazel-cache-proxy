@@ -31,7 +31,7 @@ toml = "0.8"
 figment = { version = "0.10", features = ["toml", "env"] }
 clap = { version = "4", features = ["derive"] }
 metrics = "0.24"
-metrics-exporter-prometheus = "0.16"
+metrics-exporter-prometheus = "0.18"
 futures = "0.3"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
