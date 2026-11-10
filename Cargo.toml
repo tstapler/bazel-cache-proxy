@@ -15,7 +15,7 @@ axum = { version = "0.8", features = ["macros"] }
 tonic = { version = "0.12", features = ["transport"] }
 prost = "0.13"
 tonic-build = "0.12"
-prost-build = "0.13"
+prost-build = "0.14"
 object_store = { version = "0.14", features = ["aws", "gcp"] }
 reqwest = { version = "0.12", features = ["json", "stream"] }
 async-compression = { version = "0.4", features = ["tokio", "zstd"] }
